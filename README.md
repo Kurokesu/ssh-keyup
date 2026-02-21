@@ -27,6 +27,15 @@ You can also skip the prompts entirely:
 ```bash
 python3 ssh-keyup.py --host 192.168.1.23 --user pi --alias mypi
 ```
+
+Or configure a whole fleet:
+
+```bash
+for host in 192.168.1.10 192.168.1.11 192.168.1.12; do
+  python3 ssh-keyup.py --host $host
+done
+```
+
 ## Why?
 
 ```bash
@@ -58,10 +67,3 @@ python3 ssh-keyup.py
 - Safe to re-run: existing keys are reused or regenerated, duplicate config entries are detected
 - Works with any device you can reach over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers
 - **Zero dependencies** — Python 3.8+ standard library only
-
-## Prerequisites
-
-**Python 3.8+** and OpenSSH tools (`ssh`, `ssh-keygen`) must be in PATH.
-
-- **Windows 10/11**: Install Python from [python.org](https://www.python.org/downloads/) or the Microsoft Store. OpenSSH Client is included via Settings > Optional Features, or ships with [Git for Windows](https://gitforwindows.org).
-- **Linux**: `sudo apt install python3 openssh-client` (usually pre-installed).

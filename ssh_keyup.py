@@ -340,8 +340,9 @@ def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
         if not alias_in:
             die("No alias provided.")
     else:
-        value = input(f"Alias [{host}]: ").strip()
-        alias_in = value if value else host
+        default = host[:-6] if host.endswith(".local") else host
+        value = input(f"Alias [{default}]: ").strip()
+        alias_in = value if value else default
 
     alias = sanitize_alias(alias_in)
     if alias != alias_in:

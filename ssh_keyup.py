@@ -437,61 +437,62 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Entry point: gather input, generate keys, deploy, update config."""
-    _enable_ansi()
-    args = parse_args()
+    try:
+        _enable_ansi()
+        args = parse_args()
 
-    print(f"{DIM}{BANNER}{RESET}")
-    print(f"{DIM}{('v' + __version__).rjust(WIDTH)}{RESET}")
-    separator()
+        print(f"{DIM}{BANNER}{RESET}")
+        print(f"{DIM}{('v' + __version__).rjust(WIDTH)}{RESET}")
+        separator()
 
-    host, user, alias = gather_input(args)
-    file_alias = alias.replace("-", "_")
+        host, user, alias = gather_input(args)
+        file_alias = alias.replace("-", "_")
 
-    separator()
+        separator()
 
-    ssh_dir = Path.home() / ".ssh"
-    ssh_config = ssh_dir / "config"
-    config_base = check_existing_alias(ssh_config, alias)
+        ssh_dir = Path.home() / ".ssh"
+        ssh_config = ssh_dir / "config"
+        config_base = check_existing_alias(ssh_config, alias)
 
-    runner = Runner()
-    runner.check()
-    ssh_dir.mkdir(parents=True, exist_ok=True)
+        runner = Runner()
+        runner.check()
+        ssh_dir.mkdir(parents=True, exist_ok=True)
 
-    key_path = ssh_dir / f"id_ed25519_{file_alias}"
-    pub_path = ssh_dir / f"id_ed25519_{file_alias}.pub"
+        key_path = ssh_dir / f"id_ed25519_{file_alias}"
+        pub_path = ssh_dir / f"id_ed25519_{file_alias}.pub"
 
-    if pub_path.exists():
-        print(f"Key pair {GREEN}exists{RESET} {DIM}{pub_path}{RESET}")
-        if ask_yn("Regenerate key pair?"):
-            key_path.unlink(missing_ok=True)
-            pub_path.unlink()
+        if pub_path.exists():
+            print(f"Key pair {GREEN}exists{RESET} {DIM}{pub_path}{RESET}")
+            if ask_yn("Regenerate key pair?"):
+                key_path.unlink(missing_ok=True)
+                pub_path.unlink()
+                print("Generating key pair ...")
+                generate_key(runner, key_path, pub_path, file_alias)
+        else:
             print("Generating key pair ...")
             generate_key(runner, key_path, pub_path, file_alias)
-    else:
-        print("Generating key pair ...")
-        generate_key(runner, key_path, pub_path, file_alias)
 
-    separator()
-    print(f"{DIM}You may be prompted for the remote password.{RESET}")
+        separator()
+        print(f"{DIM}You may be prompted for the remote password.{RESET}")
 
-    print(f"Deploying key to {user}@{host} ...")
-    deploy_key(runner, user, host, pub_path)
+        print(f"Deploying key to {user}@{host} ...")
+        deploy_key(runner, user, host, pub_path)
 
-    try:
-        update_ssh_config(ssh_config, alias, host, user, file_alias, config_base)
-    except Exception as ex:
-        die(f"Key deployed, but SSH config update failed: {ex}")
-    print(f"Config updated {DIM}{ssh_config}{RESET}")
+        try:
+            update_ssh_config(ssh_config, alias, host, user, file_alias,
+                              config_base)
+        except Exception as ex:
+            die(f"Key deployed, but SSH config update failed: {ex}")
+        print(f"Config updated {DIM}{ssh_config}{RESET}")
 
-    separator()
-    print(f"{GREEN}Done!{RESET} Connect with: {BOLD}ssh {alias}{RESET}\n")
-
-
-if __name__ == "__main__":
-    try:
-        main()
+        separator()
+        print(f"{GREEN}Done!{RESET} Connect with: {BOLD}ssh {alias}{RESET}\n")
     except KeyboardInterrupt:
         sys.stdout.write(SHOW_CUR)
         sys.stdout.flush()
         print(f"\n{YELLOW}Cancelled.{RESET}")
         sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

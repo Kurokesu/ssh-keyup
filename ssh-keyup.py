@@ -28,6 +28,7 @@ RED = "\033[31m"
 YELLOW = "\033[33m"
 HIDE_CUR = "\033[?25l"
 SHOW_CUR = "\033[?25h"
+WIDTH = 48
 
 if not sys.stdout.isatty():
     BOLD = DIM = RESET = GREEN = RED = YELLOW = ""
@@ -51,7 +52,7 @@ def _enable_ansi() -> None:
 
 def separator() -> None:
     """Print a horizontal separator line with surrounding spacing."""
-    print(f"\n{DIM}{'-' * 42}{RESET}\n")
+    print(f"\n{DIM}{'-' * WIDTH}{RESET}\n")
 
 
 

@@ -30,6 +30,14 @@ HIDE_CUR = "\033[?25l"
 SHOW_CUR = "\033[?25h"
 WIDTH = 48
 
+BANNER = r"""
+         _           _
+ ___ ___| |__       | | _____ _   _ _   _ _ __
+/ __/ __| '_ \ _____| |/ / _ \ | | | | | | '_ \
+\__ \__ \ | | |_____|   <  __/ |_| | |_| | |_) |
+|___/___/_| |_|     |_|\_\___|\__, |\__,_| .__/
+                              |___/      |_|"""
+
 if not sys.stdout.isatty():
     BOLD = DIM = RESET = GREEN = RED = YELLOW = ""
     HIDE_CUR = SHOW_CUR = ""
@@ -53,7 +61,6 @@ def _enable_ansi() -> None:
 def separator() -> None:
     """Print a horizontal separator line with surrounding spacing."""
     print(f"\n{DIM}{'-' * WIDTH}{RESET}\n")
-
 
 
 def warn(msg: str) -> None:
@@ -433,7 +440,8 @@ def main() -> None:
     _enable_ansi()
     args = parse_args()
 
-    print(f"\n{BOLD}ssh-keyup{RESET} {DIM}v{__version__}{RESET}")
+    print(f"{DIM}{BANNER}{RESET}")
+    print(f"{DIM}{('v' + __version__).rjust(WIDTH)}{RESET}")
     separator()
 
     host, user, alias = gather_input(args)

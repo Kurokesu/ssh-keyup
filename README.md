@@ -1,5 +1,8 @@
 # ssh-keyup
 
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
+
 Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson, or any Linux device — in one command.
 
 Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows), and `~/.ssh/config` edits every time you flash a new device? `ssh-keyup` handles all three in a single interactive session.

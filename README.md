@@ -7,7 +7,19 @@ Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson, or any Linux device — 
 
 Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows), and `~/.ssh/config` edits every time you set up a new device? `ssh-keyup` handles all three in a single interactive session.
 
+<!-- TODO: add terminal GIF demo here -->
+
 ## Quickstart
+
+Install globally with pip:
+
+```bash
+pip install git+https://github.com/Kurokesu/ssh-keyup.git
+
+ssh-keyup   # ready to use anywhere
+```
+
+Or run directly without installing:
 
 ```bash
 git clone https://github.com/Kurokesu/ssh-keyup.git
@@ -25,14 +37,14 @@ ssh mypi   # no password, ever again
 You can also skip the prompts entirely:
 
 ```bash
-python3 ssh_keyup.py --host 192.168.1.23 --user pi --alias mypi
+ssh-keyup --host 192.168.1.23 --user pi --alias mypi
 ```
 
 Or configure a whole fleet:
 
 ```bash
 for host in 192.168.1.10 192.168.1.11 192.168.1.12; do
-  python3 ssh_keyup.py --host $host
+  ssh-keyup --host $host
 done
 ```
 
@@ -48,7 +60,7 @@ nano ~/.ssh/config # add Host entry manually
 ...
 
 # with ssh-keyup
-python3 ssh_keyup.py
+ssh-keyup
 ```
 
 ## Prerequisites

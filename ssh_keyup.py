@@ -418,10 +418,10 @@ def parse_args() -> argparse.Namespace:
                     "Generates a per-host Ed25519 key pair, deploys it to the\n"
                     "remote host, and adds an entry to ~/.ssh/config.",
         epilog="examples:\n"
-               "  ssh-keyup.py                                      interactive mode\n"
-               "  ssh-keyup.py --host 192.168.1.42 --user pi        with IP address\n"
-               "  ssh-keyup.py --host rpi-5 --user trinity           with hostname\n"
-               "  ssh-keyup.py --host rpi-5 --user pi --alias mypi   custom alias",
+               "  ssh-keyup                                       interactive mode\n"
+               "  ssh-keyup --host 192.168.1.23 --user pi         with IP address\n"
+               "  ssh-keyup --host rpi-5 --user trinity           with hostname\n"
+               "  ssh-keyup --host rpi-5 --user pi --alias mypi   custom alias",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--version", action="version",

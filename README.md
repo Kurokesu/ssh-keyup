@@ -32,11 +32,11 @@ python ssh-keyup.py --host 192.168.1.42 --user pi --alias mypi
 - Detects and recovers from **host key mismatches** (common after reflashing)
 - Safe to re-run: existing keys are reused or regenerated, duplicate config entries are detected
 - Works with any device you can reach over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers
-- **Zero dependencies** — Python 3.6+ standard library only
+- **Zero dependencies** — Python 3.8+ standard library only
 
 ## Prerequisites
 
-**Python 3.6+** and OpenSSH tools (`ssh`, `ssh-keygen`) must be in PATH.
+**Python 3.8+** and OpenSSH tools (`ssh`, `ssh-keygen`) must be in PATH.
 
 - **Windows 10/11**: Install Python from [python.org](https://www.python.org/downloads/) or the Microsoft Store. OpenSSH Client is included via Settings > Optional Features, or ships with [Git for Windows](https://gitforwindows.org).
 - **Linux**: `sudo apt install python3 openssh-client` (usually pre-installed).

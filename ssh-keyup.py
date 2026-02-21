@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""ssh-keyup: SSH key auth for a new device in one command."""
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# ssh-keyup - Passwordless SSH setup for Raspberry Pi, NVIDIA Jetson, or any Linux device
+#
+# Copyright (c) 2026, UAB Kurokesu. All rights reserved.
 
 __version__ = "1.0.0"
 
 import argparse
 import ipaddress
+import os
+import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 from shutil import which
-from typing import List, Optional, Tuple, Union
-
-
-# ── ANSI formatting (zero dependencies) ─────────────────────────
+from typing import Dict, List, Optional, Tuple, Union
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -22,9 +26,12 @@ RESET = "\033[0m"
 GREEN = "\033[32m"
 RED = "\033[31m"
 YELLOW = "\033[33m"
+HIDE_CUR = "\033[?25l"
+SHOW_CUR = "\033[?25h"
 
 if not sys.stdout.isatty():
     BOLD = DIM = RESET = GREEN = RED = YELLOW = ""
+    HIDE_CUR = SHOW_CUR = ""
 
 
 def _enable_ansi() -> None:
@@ -42,30 +49,36 @@ def _enable_ansi() -> None:
         pass
 
 
-def ok(msg: str) -> None:
-    print(f"  {GREEN}OK{RESET} {msg}")
+def separator() -> None:
+    """Print a horizontal separator line with surrounding spacing."""
+    print(f"\n{DIM}{'-' * 42}{RESET}\n")
+
 
 
 def warn(msg: str) -> None:
-    print(f"  {YELLOW}!!{RESET} {msg}")
+    """Print a warning message in yellow, pip-style."""
+    print(f"{YELLOW}Warning:{RESET} {msg}")
 
 
 def fail(msg: str) -> None:
-    print(f"  {RED}FAIL{RESET} {msg}")
+    """Print an error message in red, pip-style."""
+    nl = "\n" if msg.startswith("\n") else ""
+    print(f"{nl}{RED}Error:{RESET} {msg.lstrip()}")
 
 
-HIDE_CUR = "\033[?25l"
-SHOW_CUR = "\033[?25h"
-
-if not sys.stdout.isatty():
-    HIDE_CUR = SHOW_CUR = ""
+def die(msg: str) -> None:
+    """Print an error message and exit."""
+    fail(msg)
+    sys.exit(1)
 
 
 def _read_key() -> str:
-    """Read a single keypress. Returns 'left', 'right', 'enter', 'esc', or char."""
+    """Read a single keypress, returning 'left', 'right', 'enter', 'esc', or the character."""
     if sys.platform == "win32":
         import msvcrt
         ch = msvcrt.getwch()
+        if ch == "\x03":
+            raise KeyboardInterrupt
         if ch in ("\r", "\n"):
             return "enter"
         if ch in ("\xe0", "\x00"):
@@ -93,7 +106,7 @@ def _read_key() -> str:
 
 
 def ask_yn(prompt: str, default: bool = False) -> bool:
-    """Interactive yes/no selector with arrow keys. Falls back to text for non-TTY."""
+    """Interactive yes/no selector with arrow keys. Falls back to default for non-TTY."""
     if not sys.stdin.isatty():
         return default
 
@@ -102,7 +115,7 @@ def ask_yn(prompt: str, default: bool = False) -> bool:
     def _render() -> str:
         yes = f"{GREEN}{BOLD}[ Yes ]{RESET}" if sel == 0 else f"{DIM}  Yes  {RESET}"
         no = f"{RED}{BOLD}[ No ]{RESET}" if sel == 1 else f"{DIM}  No  {RESET}"
-        return f"\r\033[2K  {prompt}  {yes}  {no}"
+        return f"\r\033[2K{prompt}  {yes}  {no}"
 
     sys.stdout.write(HIDE_CUR)
     sys.stdout.flush()
@@ -132,9 +145,8 @@ def ask_yn(prompt: str, default: bool = False) -> bool:
         sys.stdout.flush()
 
 
-# ── SSH runner ───────────────────────────────────────────────────
-
 def _find_git_bash() -> Optional[str]:
+    """Locate Git Bash on Windows for use as an SSH fallback."""
     git = which("git")
     if not git:
         return None
@@ -147,50 +159,54 @@ def _find_git_bash() -> Optional[str]:
 
 
 class Runner:
-    """Runs SSH/SCP commands natively or via Git Bash as fallback."""
+    """Run SSH commands natively or via Git Bash as fallback."""
 
     def __init__(self) -> None:
         self.git_bash = _find_git_bash()
-        openssh = all(which(c) for c in ("ssh", "ssh-keygen", "scp"))
-        self.mode: Optional[str] = "native" if openssh else ("gitbash" if self.git_bash else None)
+        openssh = all(which(c) for c in ("ssh", "ssh-keygen"))
+        self.mode = (
+            "native" if openssh
+            else ("gitbash" if self.git_bash else None)
+        )  # type: Optional[str]
 
     def check(self) -> None:
+        """Exit with guidance if no SSH tools are available."""
         if self.mode:
             return
-        fail("No SSH tools found.")
         if sys.platform == "win32":
-            print("    Install OpenSSH Client (Settings > Optional Features)")
-            print("    or Git for Windows (https://gitforwindows.org)")
+            die("No SSH tools found. Install OpenSSH Client (Settings > Optional Features) or Git for Windows")
         else:
-            print("    sudo apt install openssh-client   # Debian/Ubuntu")
-        sys.exit(1)
+            die("No SSH tools found. Install with: sudo apt install openssh-client")
 
-    def run(self, cmd: Union[List[str], str]) -> int:
+    def _subprocess_args(
+        self, cmd: Union[List[str], str],
+    ) -> Tuple[Union[List[str], str], bool]:
+        """Prepare the command and shell flag for subprocess.run."""
         if self.mode == "native":
-            return subprocess.run(cmd if isinstance(cmd, list) else cmd, shell=isinstance(cmd, str)).returncode
+            return cmd, isinstance(cmd, str)
         assert self.git_bash
         sh = cmd if isinstance(cmd, str) else " ".join(shlex.quote(a) for a in cmd)
-        return subprocess.run([self.git_bash, "-c", sh]).returncode
+        return [self.git_bash, "-c", sh], False
 
-    def run_capture(self, cmd: Union[List[str], str]) -> Tuple[int, str]:
-        """Like run(), but captures stderr and returns (exit_code, stderr_text)."""
-        if self.mode == "native":
-            r = subprocess.run(cmd if isinstance(cmd, list) else cmd,
-                               shell=isinstance(cmd, str), stderr=subprocess.PIPE)
-        else:
-            assert self.git_bash
-            sh = cmd if isinstance(cmd, str) else " ".join(shlex.quote(a) for a in cmd)
-            r = subprocess.run([self.git_bash, "-c", sh], stderr=subprocess.PIPE)
+    def run(self, cmd: Union[List[str], str], **kwargs) -> int:
+        """Run a command and return the exit code."""
+        args, shell = self._subprocess_args(cmd)
+        return subprocess.run(args, shell=shell, **kwargs).returncode
+
+    def run_capture(self, cmd: Union[List[str], str], **kwargs) -> Tuple[int, str]:
+        """Run a command, capture stderr, and return (exit_code, stderr_text)."""
+        args, shell = self._subprocess_args(cmd)
+        r = subprocess.run(args, shell=shell, stderr=subprocess.PIPE, **kwargs)
         return r.returncode, (r.stderr or b"").decode(errors="replace")
 
 
-# ── Helpers ──────────────────────────────────────────────────────
-
 def sanitize_alias(name: str) -> str:
+    """Replace non-alphanumeric characters (except - and _) with dashes."""
     return "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "host"
 
 
 def is_ip(value: str) -> bool:
+    """Return True if the value is a valid IPv4 or IPv6 address."""
     try:
         ipaddress.ip_address(value)
         return True
@@ -198,179 +214,267 @@ def is_ip(value: str) -> bool:
         return False
 
 
-def is_host_key_error(stderr: str) -> bool:
+def _is_host_key_error(stderr: str) -> bool:
+    """Return True if stderr indicates an SSH host key mismatch."""
     return ("REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
             or "Host key verification failed" in stderr)
 
 
-def step(n: int, total: int, msg: str) -> None:
-    print(f"  [{n}/{total}] {msg}")
+def _find_managed_blocks(text: str) -> Dict[str, Tuple[int, int]]:
+    """Find ssh-keyup managed blocks in SSH config text."""
+    blocks = {}  # type: Dict[str, Tuple[int, int]]
+    for m in re.finditer(
+        r"^#ssh-keyup:begin (\S+)[^\n]*\n.*?^#ssh-keyup:end \1[^\n]*\n?",
+        text, re.MULTILINE | re.DOTALL,
+    ):
+        blocks[m.group(1)] = (m.start(), m.end())
+    return blocks
 
 
-# ── CLI ──────────────────────────────────────────────────────────
+def _has_unmanaged_host(
+    text: str, alias: str, managed_blocks: Dict[str, Tuple[int, int]],
+) -> bool:
+    """Return True if a Host entry for *alias* exists outside managed markers."""
+    for m in re.finditer(r"^Host\s+(\S+)", text, re.MULTILINE):
+        if m.group(1) != alias:
+            continue
+        pos = m.start()
+        if not any(s <= pos < e for s, e in managed_blocks.values()):
+            return True
+    return False
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="ssh-keyup",
-        description="SSH key auth for a new device in one command.\n"
-                    "Generates a per-host key pair, copies it to the remote host,\n"
-                    "and adds an entry to ~/.ssh/config.",
-        epilog="Works with Raspberry Pi, NVIDIA Jetson, and any Linux device.\n"
-               "https://github.com/Kurokesu/ssh-keyup",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+
+def _build_config_block(
+    alias: str, host: str, user: str, file_alias: str,
+) -> str:
+    """Build the SSH config block text for a managed host entry."""
+    return (
+        f"#ssh-keyup:begin {alias} {date.today().isoformat()}\n"
+        f"Host {alias}\n"
+        f"    HostName {host}\n"
+        f"    User {user}\n"
+        f"    IdentityFile ~/.ssh/id_ed25519_{file_alias}\n"
+        f"#ssh-keyup:end {alias}\n"
     )
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    p.add_argument("--host", help="IP address or hostname of the remote device")
-    p.add_argument("--user", help="login username on the remote device")
-    p.add_argument("--alias", help="friendly name for ~/.ssh/config (default: hostname)")
-    p.add_argument("-y", "--yes", action="store_true", help="skip initial confirmation")
-    return p.parse_args()
 
 
-# ── Main ─────────────────────────────────────────────────────────
+def check_existing_alias(ssh_config: Path, alias: str) -> str:
+    """Check SSH config for an existing alias, prompting to overwrite if found."""
+    if not ssh_config.exists():
+        return ""
 
-def main() -> None:
-    _enable_ansi()
-    args = parse_args()
+    text = ssh_config.read_text(encoding="utf-8")
+    blocks = _find_managed_blocks(text)
 
-    print(f"\n  {BOLD}ssh-keyup{RESET} {DIM}v{__version__}{RESET}")
-    print(f"  Sets up SSH key authentication so you can connect")
-    print(f"  to a remote device without typing a password.")
-    print(f"  {DIM}──────────────────────────────────────────{RESET}\n")
+    has_unmanaged = _has_unmanaged_host(text, alias, blocks)
+    has_managed = alias in blocks
 
-    host = args.host or input(f"  Host {DIM}(IP or hostname){RESET} .. ").strip()
+    if has_unmanaged:
+        fail(f"Host '{alias}' already exists in SSH config (not managed by ssh-keyup).")
+        print(f"Use a different alias or remove the existing entry from {ssh_config}")
+        sys.exit(1)
+
+    if not has_managed:
+        return text
+
+    if not ask_yn(f"'{alias}' already configured by ssh-keyup. Overwrite?"):
+        print("\nCancelled. No changes were made.")
+        sys.exit(0)
+
+    start, end = blocks[alias]
+    before = text[:start].rstrip("\n")
+    after = text[end:].lstrip("\n")
+    if before and after:
+        return before + "\n\n" + after
+    return before or after
+
+
+def update_ssh_config(
+    ssh_config: Path, alias: str, host: str, user: str,
+    file_alias: str, base_text: str,
+) -> None:
+    """Write or replace the SSH config entry for a managed host."""
+    block = _build_config_block(alias, host, user, file_alias)
+    if base_text:
+        text = base_text.rstrip("\n") + "\n\n" + block + "\n"
+    else:
+        text = block + "\n"
+    fd, tmp = tempfile.mkstemp(dir=ssh_config.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, ssh_config)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
+    """Collect remote host, username, and alias from args or interactive prompts."""
+    host = args.host or input(
+        f"Remote host {DIM}(IP or name){RESET}: "
+    ).strip()
     if not host:
-        sys.exit(f"  {RED}No host provided.{RESET}")
+        die("No host provided.")
+    elif args.host:
+        print(f"Remote host: {host}")
 
-    user = args.user or input(f"  User {DIM}(login name){RESET} ..... ").strip()
+    user = args.user or input("Username: ").strip()
     if not user:
-        sys.exit(f"  {RED}No username provided.{RESET}")
+        die("No username provided.")
+    elif args.user:
+        print(f"Username: {user}")
 
     if args.alias:
         alias_in = args.alias
     elif is_ip(host):
-        alias_in = input(f"  Alias {DIM}(friendly name){RESET} .. ").strip()
+        alias_in = input("Alias: ").strip()
         if not alias_in:
-            sys.exit(f"  {RED}No alias provided.{RESET}")
+            die("No alias provided.")
     else:
-        alias_in = host
-        print(f"  Alias ................. {alias_in} {DIM}(from hostname){RESET}")
+        value = input(f"Alias [{host}]: ").strip()
+        alias_in = value if value else host
 
     alias = sanitize_alias(alias_in)
     if alias != alias_in:
-        print(f"            {DIM}sanitized to: {alias}{RESET}")
+        print(f"{DIM}(sanitized to: {alias}){RESET}")
+
+    return host, user, alias
+
+
+def generate_key(
+    runner: Runner, key_path: Path, pub_path: Path, file_alias: str,
+) -> None:
+    """Generate an Ed25519 key pair."""
+    if runner.mode == "native":
+        rc = runner.run([
+            "ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key_path),
+        ])
+    else:
+        rc = runner.run(
+            f"ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519_{file_alias}"
+        )
+
+    if rc != 0:
+        die("ssh-keygen failed.")
+
+
+def deploy_key(runner: Runner, user: str, host: str, pub_path: Path) -> None:
+    """Deploy the public key to the remote host in a single SSH session."""
+    remote = f"{user}@{host}"
+    pub_key = pub_path.read_text(encoding="utf-8").strip()
+
+    install_cmd = (
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+        "key=$(cat) && "
+        "if ! grep -qF \"$key\" ~/.ssh/authorized_keys 2>/dev/null; then "
+        "printf '%s\\n' \"$key\" >> ~/.ssh/authorized_keys; fi && "
+        "chmod 600 ~/.ssh/authorized_keys"
+    )
+
+    rc, stderr = runner.run_capture(
+        ["ssh", remote, install_cmd], input=pub_key.encode(),
+    )
+
+    if rc != 0 and _is_host_key_error(stderr):
+        if stderr.strip():
+            for line in stderr.strip().splitlines():
+                print(f"{DIM}{line}{RESET}")
+            print()
+        if ask_yn("Remove old host key and retry?"):
+            runner.run(["ssh-keygen", "-R", host])
+            rc, stderr = runner.run_capture(
+                ["ssh", remote, install_cmd], input=pub_key.encode(),
+            )
+            if rc != 0:
+                die("\nStill can't connect. Check host and credentials.")
+        else:
+            print(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
+            sys.exit(0)
+    elif rc != 0:
+        fail("\nSSH connection failed. Check host and credentials.")
+        if stderr.strip():
+            seen = set()  # type: set
+            for line in stderr.strip().splitlines():
+                if line not in seen:
+                    seen.add(line)
+                    print(f"  {DIM}{line}{RESET}")
+        sys.exit(1)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    p = argparse.ArgumentParser(
+        prog="ssh-keyup",
+        description="SSH key auth for a new device in one command.\n"
+                    "Generates a per-host Ed25519 key pair, deploys it to the\n"
+                    "remote host, and adds an entry to ~/.ssh/config.",
+        epilog="examples:\n"
+               "  ssh-keyup.py                                      interactive mode\n"
+               "  ssh-keyup.py --host 192.168.1.42 --user pi        with IP address\n"
+               "  ssh-keyup.py --host rpi-5 --user trinity           with hostname\n"
+               "  ssh-keyup.py --host rpi-5 --user pi --alias mypi   custom alias",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__}")
+    p.add_argument("--host",
+                   help="IP address or hostname of the remote device")
+    p.add_argument("--user",
+                   help="login username on the remote device")
+    p.add_argument("--alias",
+                   help="friendly name for ~/.ssh/config (default: hostname)")
+    return p.parse_args()
+
+
+def main() -> None:
+    """Entry point: gather input, generate keys, deploy, update config."""
+    _enable_ansi()
+    args = parse_args()
+
+    print(f"\n{BOLD}ssh-keyup{RESET} {DIM}v{__version__}{RESET}")
+    separator()
+
+    host, user, alias = gather_input(args)
     file_alias = alias.replace("-", "_")
 
-    print(f"  {DIM}──────────────────────────────────────────{RESET}")
+    separator()
 
-    if not args.yes:
-        print()
-        input(f"  Press Enter to continue (Ctrl+C to cancel) ")
-
-    print()
+    ssh_dir = Path.home() / ".ssh"
+    ssh_config = ssh_dir / "config"
+    config_base = check_existing_alias(ssh_config, alias)
 
     runner = Runner()
     runner.check()
-
-    ssh_dir = Path.home() / ".ssh"
-    key_path = ssh_dir / f"id_rsa_{file_alias}"
-    pub_path = ssh_dir / f"id_rsa_{file_alias}.pub"
-    ssh_config = ssh_dir / "config"
     ssh_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Key generation ───────────────────────────────────────────
+    key_path = ssh_dir / f"id_ed25519_{file_alias}"
+    pub_path = ssh_dir / f"id_ed25519_{file_alias}.pub"
+
     if pub_path.exists():
-        ok(f"Key pair exists {DIM}{pub_path}{RESET}")
+        print(f"Key pair {GREEN}exists{RESET} {DIM}{pub_path}{RESET}")
+        if ask_yn("Regenerate key pair?"):
+            key_path.unlink(missing_ok=True)
+            pub_path.unlink()
+            print("Generating key pair ...")
+            generate_key(runner, key_path, pub_path, file_alias)
     else:
-        print(f"  Generating key pair: {DIM}{key_path}{RESET}")
-        if runner.mode == "native":
-            rc = runner.run(["ssh-keygen", "-t", "rsa", "-b", "4096", "-N", "", "-f", str(key_path)])
-        else:
-            rc = runner.run(f"ssh-keygen -t rsa -b 4096 -N '' -f ~/.ssh/id_rsa_{file_alias}")
-        if rc != 0:
-            fail("ssh-keygen failed.")
-            sys.exit(1)
-        ok("Key pair generated")
+        print("Generating key pair ...")
+        generate_key(runner, key_path, pub_path, file_alias)
 
-    remote = f"{user}@{host}"
-    temp_remote = f"~/.ssh/id_rsa_{file_alias}.pub.tmp"
+    print(f"\n{DIM}You may be prompted for the remote password.{RESET}")
 
-    print(f"\n  {DIM}You may be prompted for the password (up to 3 times).{RESET}\n")
+    print(f"Deploying key to {user}@{host} ...")
+    deploy_key(runner, user, host, pub_path)
 
-    # ── Step 1: prepare remote ~/.ssh ────────────────────────────
-    step(1, 3, "Preparing remote ~/.ssh ...")
-    rc, stderr = runner.run_capture(["ssh", remote, "mkdir -p ~/.ssh && chmod 700 ~/.ssh"])
-    if rc != 0 and is_host_key_error(stderr):
-        fail("Host key mismatch.")
-        print()
-        warn("This is common after reflashing a device.")
-        warn("The old host key in known_hosts no longer matches.")
-        print()
-        if ask_yn("Remove old host key and retry?", default=False):
-            print()
-            runner.run(["ssh-keygen", "-R", host])
-            print()
-            step(1, 3, "Retrying ...")
-            rc = runner.run(["ssh", remote, "mkdir -p ~/.ssh && chmod 700 ~/.ssh"])
-            if rc != 0:
-                fail("Still can't connect. Check IP/hostname and credentials.")
-                sys.exit(1)
-        else:
-            print()
-            print("  Aborted. To fix manually:")
-            print(f"    ssh-keygen -R {host}")
-            sys.exit(0)
-    elif rc != 0:
-        fail("SSH connection failed. Check IP/hostname and credentials.")
-        if stderr.strip():
-            for line in stderr.strip().splitlines()[:3]:
-                print(f"    {DIM}{line}{RESET}")
-        sys.exit(1)
-    ok("Remote ~/.ssh ready")
-
-    # ── Step 2: upload public key ────────────────────────────────
-    step(2, 3, "Uploading public key ...")
-    if runner.mode == "native":
-        rc = runner.run(["scp", str(pub_path), f"{remote}:{temp_remote}"])
-    else:
-        rc = runner.run(f"scp {shlex.quote(str(pub_path))} {shlex.quote(f'{remote}:{temp_remote}')}")
-    if rc != 0:
-        fail("Failed to upload public key.")
-        sys.exit(1)
-    ok("Public key uploaded")
-
-    # ── Step 3: install into authorized_keys ─────────────────────
-    step(3, 3, "Installing into authorized_keys ...")
-    rc = runner.run([
-        "ssh", remote,
-        f"cat {temp_remote} >> ~/.ssh/authorized_keys && "
-        f"chmod 600 ~/.ssh/authorized_keys && "
-        f"rm -f {temp_remote}",
-    ])
-    if rc != 0:
-        fail("Failed to install key on remote host.")
-        sys.exit(1)
-    ok("Key installed")
-
-    # ── Update local SSH config ──────────────────────────────────
     try:
-        ssh_config.parent.mkdir(parents=True, exist_ok=True)
-        with ssh_config.open("a", encoding="utf-8", newline="\n") as f:
-            f.write("\n")
-            f.write(f"#Begin-{alias} {date.today().isoformat()}\n")
-            f.write(f"Host {alias}\n")
-            f.write(f"    HostName {host}\n")
-            f.write(f"    User {user}\n")
-            f.write(f"    IdentityFile ~/.ssh/id_rsa_{file_alias}\n")
-            f.write(f"#End-{alias}\n")
-            f.write("\n")
+        update_ssh_config(ssh_config, alias, host, user, file_alias, config_base)
     except Exception as ex:
-        fail(f"Key installed, but SSH config update failed: {ex}")
-        sys.exit(1)
-    ok(f"Config updated {DIM}{ssh_config}{RESET}")
+        die(f"Key deployed, but SSH config update failed: {ex}")
+    print(f"Config updated {DIM}{ssh_config}{RESET}")
 
-    print(f"\n  {DIM}──────────────────────────────────────────{RESET}")
-    print(f"  {GREEN}Done!{RESET} Connect with: {BOLD}ssh {alias}{RESET}\n")
+    separator()
+    print(f"{GREEN}Done!{RESET} Connect with: {BOLD}ssh {alias}{RESET}\n")
 
 
 if __name__ == "__main__":
@@ -379,5 +483,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sys.stdout.write(SHOW_CUR)
         sys.stdout.flush()
-        print("\n  Cancelled.")
+        print("\nCancelled.")
         sys.exit(130)

@@ -12,8 +12,8 @@ Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows), and `~/.ssh/
 ```bash
 git clone https://github.com/Kurokesu/ssh-keyup.git
 cd ssh-keyup
-python ssh-keyup.py   # Windows
-python3 ssh-keyup.py  # Linux
+python ssh_keyup.py   # Windows
+python3 ssh_keyup.py  # Linux
 ```
 
 Follow the prompts, enter the remote password once, and you're done:
@@ -25,14 +25,14 @@ ssh mypi   # no password, ever again
 You can also skip the prompts entirely:
 
 ```bash
-python3 ssh-keyup.py --host 192.168.1.23 --user pi --alias mypi
+python3 ssh_keyup.py --host 192.168.1.23 --user pi --alias mypi
 ```
 
 Or configure a whole fleet:
 
 ```bash
 for host in 192.168.1.10 192.168.1.11 192.168.1.12; do
-  python3 ssh-keyup.py --host $host
+  python3 ssh_keyup.py --host $host
 done
 ```
 
@@ -48,7 +48,7 @@ nano ~/.ssh/config # add Host entry manually
 ...
 
 # with ssh-keyup
-python3 ssh-keyup.py
+python3 ssh_keyup.py
 ```
 
 ## Prerequisites

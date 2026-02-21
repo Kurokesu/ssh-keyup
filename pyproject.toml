@@ -7,7 +7,7 @@ name = "ssh-keyup"
 dynamic = ["version"]
 description = "Passwordless SSH setup for Raspberry Pi, NVIDIA Jetson, or any Linux device"
 readme = "README.md"
-license = "GPL-3.0-or-later"
+license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.8"
 authors = [{name = "UAB Kurokesu"}]
 keywords = ["ssh", "ssh-keys", "ssh-config", "ssh-copy-id", "passwordless-ssh", "raspberry-pi", "rpi", "jetson", "automation"]

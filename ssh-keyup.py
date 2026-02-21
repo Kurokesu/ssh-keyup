@@ -279,7 +279,7 @@ def check_existing_alias(ssh_config: Path, alias: str) -> str:
         return text
 
     if not ask_yn(f"'{alias}' already configured by ssh-keyup. Overwrite?"):
-        print("\nCancelled. No changes were made.")
+        print(f"\n{YELLOW}Cancelled.{RESET} No changes were made.")
         sys.exit(0)
 
     start, end = blocks[alias]
@@ -463,7 +463,8 @@ def main() -> None:
         print("Generating key pair ...")
         generate_key(runner, key_path, pub_path, file_alias)
 
-    print(f"\n{DIM}You may be prompted for the remote password.{RESET}")
+    separator()
+    print(f"{DIM}You may be prompted for the remote password.{RESET}")
 
     print(f"Deploying key to {user}@{host} ...")
     deploy_key(runner, user, host, pub_path)
@@ -484,5 +485,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sys.stdout.write(SHOW_CUR)
         sys.stdout.flush()
-        print("\nCancelled.")
+        print(f"\n{YELLOW}Cancelled.{RESET}")
         sys.exit(130)

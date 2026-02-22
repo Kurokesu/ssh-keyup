@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.8"
 authors = [{name = "UAB Kurokesu"}]
-keywords = ["ssh", "ssh-keys", "ssh-config", "ssh-copy-id", "passwordless-ssh", "raspberry-pi", "rpi", "jetson", "automation"]
+keywords = ["ssh", "ssh-keys", "ssh-config", "ssh-copy-id", "passwordless-ssh", "raspberry-pi", "rpi", "jetson", "automation", "vscode", "remote-ssh"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

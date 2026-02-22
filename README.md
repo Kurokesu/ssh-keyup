@@ -2,6 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson, or any Linux device — in one command.
 
@@ -33,6 +34,10 @@ Follow the prompts, enter the remote password once, and you're done:
 ```bash
 ssh mypi   # no password, ever again
 ```
+
+Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-ssh) — your `~/.ssh/config` is already set up. Hit `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host**, pick your alias, and get a full IDE on your remote device — no password:
+
+![VSCode Remote SSH](demo-vscode.gif)
 
 You can also skip the prompts entirely:
 
@@ -74,8 +79,9 @@ ssh-keyup
 
 - Generates a per-host **Ed25519** key pair (`~/.ssh/id_ed25519_<alias>`)
 - Deploys the public key in a **single SSH session** — only one password prompt
-- Adds a named entry to `~/.ssh/config` so you can simply `ssh <alias>`
+- Adds a named entry to `~/.ssh/config` — works instantly with `ssh <alias>` and VSCode Remote SSH
 - Detects and recovers from **host key mismatches** (common after reflashing)
 - Safe to re-run: existing keys are reused or regenerated, duplicate config entries are detected
 - Works with any device you can reach over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers
 - **Zero dependencies** — Python 3.8+ standard library only
+- Installable via `pip` or runnable as a single script

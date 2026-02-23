@@ -35,7 +35,7 @@ Follow the prompts, enter the remote password once, and you're done:
 ssh mypi   # no password, ever again
 ```
 
-Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-ssh) — your `~/.ssh/config` is already set up. Hit `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host**, pick your alias, and get a full IDE on your remote device — no password:
+Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) — your `~/.ssh/config` is already set up. Hit `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host**, pick your alias, and get a full IDE on your remote device — no password:
 
 ![VSCode Remote SSH](demo-vscode.gif)
 

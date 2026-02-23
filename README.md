@@ -29,7 +29,9 @@ python ssh_keyup.py   # Windows
 python3 ssh_keyup.py  # Linux
 ```
 
-Follow the prompts, enter the remote password once, and you're done:
+Follow the prompts, enter the remote password once, and you're done.
+
+SSH via command:
 
 ```bash
 ssh mypi   # no password, ever again
@@ -39,7 +41,7 @@ Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemNam
 
 ![VSCode Remote SSH](demo-vscode.gif)
 
-You can also skip the prompts entirely:
+You can also skip the remote host prompts:
 
 ```bash
 ssh-keyup --host 192.168.1.23 --user pi --alias mypi
@@ -78,10 +80,11 @@ ssh-keyup
 ## Features
 
 - Generates a per-host **Ed25519** key pair (`~/.ssh/id_ed25519_<alias>`)
-- Deploys the public key in a **single SSH session** — only one password prompt
+- Deploys the public key to remote host in a **single SSH session** — only one password prompt
+- **Never touches your password** — `ssh-keyup` only pipes the public key; **SSH** handles password authentication directly through its own terminal
 - Adds a named entry to `~/.ssh/config` — works instantly with `ssh <alias>` and VSCode Remote SSH
 - Detects and recovers from **host key mismatches** (common after reflashing)
-- Safe to re-run: existing keys are reused or regenerated, duplicate config entries are detected
+- Handles re-runs gracefully: reuses existing keys or offers regeneration, detects duplicate config entries
 - Works with any device you can reach over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers
 - **Zero dependencies** — Python 3.8+ standard library only
-- Installable via `pip` or runnable as a single script
+- Installs via `pip` or runs as a single script

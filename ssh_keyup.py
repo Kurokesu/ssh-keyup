@@ -182,7 +182,8 @@ class Runner:
         if self.mode:
             return
         if sys.platform == "win32":
-            die("No SSH tools found. Install OpenSSH Client (Settings > Optional Features) or Git for Windows")
+            die("No SSH tools found. Install OpenSSH Client "
+                "(Settings > Optional Features) or Git for Windows")
         else:
             die("No SSH tools found. Install with: sudo apt install openssh-client")
 
@@ -222,10 +223,43 @@ def is_ip(value: str) -> bool:
         return False
 
 
-def _is_host_key_error(stderr: str) -> bool:
-    """Return True if stderr indicates an SSH host key mismatch."""
-    return ("REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
-            or "Host key verification failed" in stderr)
+def _is_host_key_changed(stderr: str) -> bool:
+    """Return True if stderr indicates the remote host key has changed."""
+    return "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
+
+
+def _is_unknown_host(stderr: str) -> bool:
+    """Return True if stderr indicates an unknown (first-time) host."""
+    return ("Host key verification failed" in stderr
+            and "REMOTE HOST IDENTIFICATION HAS CHANGED" not in stderr)
+
+
+def _format_host_key_info(host: str, stderr: str) -> Optional[str]:
+    """Parse verbose SSH stderr into native-looking host key info."""
+    key_m = re.search(r"Server host key: (\S+) (\S+)", stderr)
+    if not key_m:
+        return None
+    key_type = key_m.group(1).replace("ssh-", "").upper()
+    fingerprint = key_m.group(2)
+    ip_m = re.search(r"Connecting to \S+ \[([^\]]+)\]", stderr)
+    addr = f" ({ip_m.group(1)})" if ip_m else ""
+    lines = [
+        f"The authenticity of host '{host}{addr}' can't be established.",
+        f"{key_type} key fingerprint is {fingerprint}.",
+        "This key is not known by any other names.",
+    ]
+    return "\n".join(lines)
+
+
+def _handle_unknown_host(host: str, stderr: str) -> None:
+    """Show host key info and ask user to confirm connection."""
+    info = _format_host_key_info(host, stderr)
+    if info:
+        for line in info.splitlines():
+            print(f"{DIM}{line}{RESET}")
+    if not ask_yn("Are you sure you want to continue connecting?"):
+        print(f"{YELLOW}Cancelled.{RESET}")
+        sys.exit(0)
 
 
 def _find_managed_blocks(text: str) -> Dict[str, Tuple[int, int]]:
@@ -368,6 +402,18 @@ def generate_key(
         die("ssh-keygen failed.")
 
 
+def _ssh_deploy(runner: Runner, remote: str, install_cmd: str,
+                pub_key: str, accept_new: bool = False) -> Tuple[int, str]:
+    """Run the SSH deploy command. accept_new=True uses accept-new policy."""
+    policy = "accept-new" if accept_new else "yes"
+    cmd = ["ssh"]
+    if not accept_new:
+        cmd.append("-v")
+    cmd.extend(["-o", f"StrictHostKeyChecking={policy}",
+                remote, install_cmd])
+    return runner.run_capture(cmd, input=pub_key.encode())
+
+
 def deploy_key(runner: Runner, user: str, host: str, pub_path: Path) -> None:
     """Deploy the public key to the remote host in a single SSH session."""
     remote = f"{user}@{host}"
@@ -381,31 +427,34 @@ def deploy_key(runner: Runner, user: str, host: str, pub_path: Path) -> None:
         "chmod 600 ~/.ssh/authorized_keys"
     )
 
-    rc, stderr = runner.run_capture(
-        ["ssh", remote, install_cmd], input=pub_key.encode(),
-    )
+    rc, stderr = _ssh_deploy(runner, remote, install_cmd, pub_key)
 
-    if rc != 0 and _is_host_key_error(stderr):
-        if stderr.strip():
-            for line in stderr.strip().splitlines():
+    if rc != 0 and _is_host_key_changed(stderr):
+        for line in stderr.strip().splitlines():
+            if not line.startswith("debug1:"):
                 print(f"{DIM}{line}{RESET}")
-            print()
+        print()
         if ask_yn("Remove old host key and retry?"):
             runner.run(["ssh-keygen", "-R", host])
-            rc, stderr = runner.run_capture(
-                ["ssh", remote, install_cmd], input=pub_key.encode(),
-            )
+            rc, stderr = _ssh_deploy(runner, remote, install_cmd, pub_key,
+                                     accept_new=True)
             if rc != 0:
                 die("\nStill can't connect. Check host and credentials.")
         else:
             print(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
             sys.exit(0)
+    elif rc != 0 and _is_unknown_host(stderr):
+        _handle_unknown_host(host, stderr)
+        rc, stderr = _ssh_deploy(runner, remote, install_cmd, pub_key,
+                                 accept_new=True)
+        if rc != 0:
+            die("\nSSH connection failed. Check host and credentials.")
     elif rc != 0:
         fail("\nSSH connection failed. Check host and credentials.")
         if stderr.strip():
             seen = set()  # type: set
             for line in stderr.strip().splitlines():
-                if line not in seen:
+                if line not in seen and not line.startswith("debug1:"):
                     seen.add(line)
                     print(f"  {DIM}{line}{RESET}")
         sys.exit(1)

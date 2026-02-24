@@ -223,43 +223,63 @@ def is_ip(value: str) -> bool:
         return False
 
 
-def _is_host_key_changed(stderr: str) -> bool:
-    """Return True if stderr indicates the remote host key has changed."""
-    return "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    p = argparse.ArgumentParser(
+        prog="ssh-keyup",
+        description="SSH key auth for a new device in one command.\n"
+                    "Generates a per-host Ed25519 key pair, deploys it to the\n"
+                    "remote host, and adds an entry to ~/.ssh/config.",
+        epilog="examples:\n"
+               "  ssh-keyup                                       interactive mode\n"
+               "  ssh-keyup --host 192.168.1.23 --user pi         with IP address\n"
+               "  ssh-keyup --host rpi-5 --user trinity           with hostname\n"
+               "  ssh-keyup --host rpi-5 --user pi --alias mypi   custom alias",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__}")
+    p.add_argument("--host",
+                   help="IP address or hostname of the remote device")
+    p.add_argument("--user",
+                   help="login username on the remote device")
+    p.add_argument("--alias",
+                   help="friendly name for ~/.ssh/config (default: hostname)")
+    return p.parse_args()
 
 
-def _is_unknown_host(stderr: str) -> bool:
-    """Return True if stderr indicates an unknown (first-time) host."""
-    return ("Host key verification failed" in stderr
-            and "REMOTE HOST IDENTIFICATION HAS CHANGED" not in stderr)
+def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
+    """Collect remote host, username, and alias from args or interactive prompts."""
+    host = args.host or input(
+        f"Remote host {DIM}(IP or name){RESET}: "
+    ).strip()
+    if not host:
+        die("No host provided.")
+    elif args.host:
+        print(f"Remote host: {host}")
 
+    user = args.user or input("Username: ").strip()
+    if not user:
+        die("No username provided.")
+    elif args.user:
+        print(f"Username: {user}")
 
-def _format_host_key_info(host: str, stderr: str) -> Optional[str]:
-    """Parse verbose SSH stderr into native-looking host key info."""
-    key_m = re.search(r"Server host key: (\S+) (\S+)", stderr)
-    if not key_m:
-        return None
-    key_type = key_m.group(1).replace("ssh-", "").upper()
-    fingerprint = key_m.group(2)
-    ip_m = re.search(r"Connecting to \S+ \[([^\]]+)\]", stderr)
-    addr = f" ({ip_m.group(1)})" if ip_m else ""
-    lines = [
-        f"The authenticity of host '{host}{addr}' can't be established.",
-        f"{key_type} key fingerprint is {fingerprint}.",
-        "This key is not known by any other names.",
-    ]
-    return "\n".join(lines)
+    if args.alias:
+        alias_in = args.alias
+    elif is_ip(host):
+        alias_in = input("Alias: ").strip()
+        if not alias_in:
+            die("No alias provided.")
+    else:
+        default = host[:-6] if host.endswith(".local") else host
+        value = input(f"Alias [{default}]: ").strip()
+        alias_in = value if value else default
 
+    alias = sanitize_alias(alias_in)
+    if alias != alias_in:
+        print(f"{DIM}(sanitized to: {alias}){RESET}")
 
-def _handle_unknown_host(host: str, stderr: str) -> None:
-    """Show host key info and ask user to confirm connection."""
-    info = _format_host_key_info(host, stderr)
-    if info:
-        for line in info.splitlines():
-            print(f"{DIM}{line}{RESET}")
-    if not ask_yn("Are you sure you want to continue connecting?"):
-        print(f"{YELLOW}Cancelled.{RESET}")
-        sys.exit(0)
+    return host, user, alias
 
 
 def _find_managed_blocks(text: str) -> Dict[str, Tuple[int, int]]:
@@ -351,40 +371,6 @@ def update_ssh_config(
         raise
 
 
-def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
-    """Collect remote host, username, and alias from args or interactive prompts."""
-    host = args.host or input(
-        f"Remote host {DIM}(IP or name){RESET}: "
-    ).strip()
-    if not host:
-        die("No host provided.")
-    elif args.host:
-        print(f"Remote host: {host}")
-
-    user = args.user or input("Username: ").strip()
-    if not user:
-        die("No username provided.")
-    elif args.user:
-        print(f"Username: {user}")
-
-    if args.alias:
-        alias_in = args.alias
-    elif is_ip(host):
-        alias_in = input("Alias: ").strip()
-        if not alias_in:
-            die("No alias provided.")
-    else:
-        default = host[:-6] if host.endswith(".local") else host
-        value = input(f"Alias [{default}]: ").strip()
-        alias_in = value if value else default
-
-    alias = sanitize_alias(alias_in)
-    if alias != alias_in:
-        print(f"{DIM}(sanitized to: {alias}){RESET}")
-
-    return host, user, alias
-
-
 def generate_key(
     runner: Runner, key_path: Path, pub_path: Path, file_alias: str,
 ) -> None:
@@ -400,6 +386,45 @@ def generate_key(
 
     if rc != 0:
         die("ssh-keygen failed.")
+
+
+def _is_host_key_changed(stderr: str) -> bool:
+    """Return True if stderr indicates the remote host key has changed."""
+    return "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr
+
+
+def _is_unknown_host(stderr: str) -> bool:
+    """Return True if stderr indicates an unknown (first-time) host."""
+    return ("Host key verification failed" in stderr
+            and "REMOTE HOST IDENTIFICATION HAS CHANGED" not in stderr)
+
+
+def _format_host_key_info(host: str, stderr: str) -> Optional[str]:
+    """Parse verbose SSH stderr into native-looking host key info."""
+    key_m = re.search(r"Server host key: (\S+) (\S+)", stderr)
+    if not key_m:
+        return None
+    key_type = key_m.group(1).replace("ssh-", "").upper()
+    fingerprint = key_m.group(2)
+    ip_m = re.search(r"Connecting to \S+ \[([^\]]+)\]", stderr)
+    addr = f" ({ip_m.group(1)})" if ip_m else ""
+    lines = [
+        f"The authenticity of host '{host}{addr}' can't be established.",
+        f"{key_type} key fingerprint is {fingerprint}.",
+        "This key is not known by any other names.",
+    ]
+    return "\n".join(lines)
+
+
+def _handle_unknown_host(host: str, stderr: str) -> None:
+    """Show host key info and ask user to confirm connection."""
+    info = _format_host_key_info(host, stderr)
+    if info:
+        for line in info.splitlines():
+            print(f"{DIM}{line}{RESET}")
+    if not ask_yn("Are you sure you want to continue connecting?"):
+        print(f"{YELLOW}Cancelled.{RESET}")
+        sys.exit(0)
 
 
 def _ssh_deploy(runner: Runner, remote: str, install_cmd: str,
@@ -458,31 +483,6 @@ def deploy_key(runner: Runner, user: str, host: str, pub_path: Path) -> None:
                     seen.add(line)
                     print(f"  {DIM}{line}{RESET}")
         sys.exit(1)
-
-
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    p = argparse.ArgumentParser(
-        prog="ssh-keyup",
-        description="SSH key auth for a new device in one command.\n"
-                    "Generates a per-host Ed25519 key pair, deploys it to the\n"
-                    "remote host, and adds an entry to ~/.ssh/config.",
-        epilog="examples:\n"
-               "  ssh-keyup                                       interactive mode\n"
-               "  ssh-keyup --host 192.168.1.23 --user pi         with IP address\n"
-               "  ssh-keyup --host rpi-5 --user trinity           with hostname\n"
-               "  ssh-keyup --host rpi-5 --user pi --alias mypi   custom alias",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument("--version", action="version",
-                   version=f"%(prog)s {__version__}")
-    p.add_argument("--host",
-                   help="IP address or hostname of the remote device")
-    p.add_argument("--user",
-                   help="login username on the remote device")
-    p.add_argument("--alias",
-                   help="friendly name for ~/.ssh/config (default: hostname)")
-    return p.parse_args()
 
 
 def main() -> None:

@@ -44,7 +44,7 @@ class CLI:
     SHOW_CUR = "\033[?25h"
 
     S_BANNER = ""
-    S_VERSION = GREEN + BOLD
+    S_VERSION = CYAN + BOLD
     S_SEPARATOR = DIM
     S_HINT = DIM
     S_SSH_WARNING = YELLOW
@@ -112,7 +112,7 @@ class CLI:
     @staticmethod
     def success(msg: str) -> None:
         """Print a success message."""
-        print(f"{CLI.S_SUCCESS}{msg}{CLI.RESET}")
+        print(f"{CLI.S_SUCCESS}Done!{CLI.RESET} {msg}")
 
     @staticmethod
     def status(msg: str) -> None:
@@ -120,9 +120,13 @@ class CLI:
         print(f"{CLI.S_STATUS}{msg}{CLI.RESET}")
 
     @staticmethod
-    def cancel(msg: str = "Cancelled.") -> None:
+    def cancel(msg: str = "") -> None:
         """Print a cancellation message."""
-        print(f"{CLI.YELLOW}{msg}{CLI.RESET}")
+        print(f"{CLI.YELLOW}Cancelled.{CLI.RESET}", end="")
+        if msg:
+            print(f" {msg}")
+        else:
+            print()
 
     @staticmethod
     def ssh_warning(msg: str) -> None:
@@ -342,7 +346,7 @@ class SSHConfig:
             return text
 
         if not cli.ask_yn(f"'{alias}' already configured by ssh-keyup. Overwrite?"):
-            cli.cancel("Cancelled. No changes were made.")
+            cli.cancel("No changes were made.")
             sys.exit(0)
 
         start, end = blocks[alias]
@@ -432,6 +436,7 @@ class Deployer:
         """Deploy the public key to the remote host in a single SSH session."""
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
+        cli.status(f"Deploying key to {user}@{host} ...")
 
         install_cmd = (
             "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
@@ -451,7 +456,6 @@ class Deployer:
             if cli.ask_yn("Remove old host key and retry?"):
                 cli.status(f"Removing old host key for {host} ...")
                 runner.run(["ssh-keygen", "-R", host])
-                cli.status(f"Deploying key to {user}@{host} ...")
                 rc, stderr = Deployer._ssh_cmd(
                     runner, remote, install_cmd, pub_key, accept_new=True)
                 if rc != 0:
@@ -461,7 +465,6 @@ class Deployer:
                 sys.exit(0)
         elif rc != 0 and Deployer._is_unknown_host(stderr):
             Deployer._handle_unknown_host(host, stderr)
-            cli.status(f"Deploying key to {user}@{host} ...")
             rc, stderr = Deployer._ssh_cmd(
                 runner, remote, install_cmd, pub_key, accept_new=True)
             if rc != 0:
@@ -602,7 +605,6 @@ def main() -> None:
             generate_key(runner, key_path, pub_path, file_alias)
 
         cli.separator()
-        cli.status(f"Deploying key to {user}@{host} ...")
         Deployer.deploy(runner, user, host, pub_path)
 
         try:
@@ -613,7 +615,7 @@ def main() -> None:
         cli.msg(f"Config updated {ssh_config}")
 
         cli.separator()
-        cli.success(f"Done! Connect with: ssh {alias}\n")
+        cli.success(f"SSH key deployed for '{alias}'.\n")
     except KeyboardInterrupt:
         sys.stdout.write(CLI.SHOW_CUR)
         sys.stdout.flush()

@@ -139,6 +139,21 @@ class CLI:
         print(f"  {CLI.S_SSH_INFO}{msg}{CLI.RESET}")
 
     @staticmethod
+    def prompt(label: str, value: Optional[str] = None, *, hint: str = "", default: str = "") -> str:
+        """Prompt for input, or display and return a pre-supplied value."""
+        if value:
+            print(f"{label}: {value}")
+            return value
+        if default:
+            suffix = f" [{CLI.CYAN}{default}{CLI.RESET}]"
+        elif hint:
+            suffix = f" {CLI.S_HINT}({hint}){CLI.RESET}"
+        else:
+            suffix = ""
+        result = input(f"{label}{suffix}: ").strip()
+        return result if result else default
+
+    @staticmethod
     def msg(msg: str = "") -> None:
         """Print an unstyled message."""
         print(msg)
@@ -480,9 +495,12 @@ class Deployer:
             sys.exit(1)
 
 
-def sanitize_alias(name: str) -> str:
+def sanitize_alias(name: str, quiet: bool = False) -> str:
     """Replace non-alphanumeric characters (except - and _) with dashes."""
-    return "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "host"
+    clean = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "host"
+    if not quiet and clean != name:
+        cli.hint(f"(sanitized to: {clean})")
+    return clean
 
 
 def is_ip(value: str) -> bool:
@@ -521,34 +539,25 @@ def parse_args() -> argparse.Namespace:
 
 def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
     """Collect remote host, username, and alias from args or interactive prompts."""
-    host = args.host or input(
-        f"Remote host {CLI.S_HINT}(IP or name){CLI.RESET}: "
-    ).strip()
+    host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
         cli.fatal("No host provided.")
-    elif args.host:
-        cli.msg(f"Remote host: {host}")
 
-    user = args.user or input("Username: ").strip()
+    user = cli.prompt("Username", args.user)
     if not user:
         cli.fatal("No username provided.")
-    elif args.user:
-        cli.msg(f"Username: {user}")
 
     if args.alias:
-        alias_in = args.alias
+        alias = cli.prompt("Alias", args.alias)
     elif is_ip(host):
-        alias_in = input("Alias: ").strip()
-        if not alias_in:
+        alias = cli.prompt("Alias")
+        if not alias:
             cli.fatal("No alias provided.")
     else:
-        default = host[:-6] if host.endswith(".local") else host
-        value = input(f"Alias [{default}]: ").strip()
-        alias_in = value if value else default
+        raw = host[:-6] if host.endswith(".local") else host
+        alias = cli.prompt("Alias", default=sanitize_alias(raw, quiet=True))
 
-    alias = sanitize_alias(alias_in)
-    if alias != alias_in:
-        cli.hint(f"(sanitized to: {alias})")
+    alias = sanitize_alias(alias)
 
     return host, user, alias
 

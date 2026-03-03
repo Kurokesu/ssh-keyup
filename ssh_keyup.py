@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# ssh-keyup - Passwordless SSH setup for Raspberry Pi, NVIDIA Jetson, or any Linux device
+# ssh-keyup - Passwordless SSH setup for
+# Raspberry Pi, NVIDIA Jetson, or any Linux device
 #
 # Copyright (c) 2026, UAB Kurokesu. All rights reserved.
 
@@ -80,7 +81,8 @@ class CLI:
     def banner() -> None:
         """Print the ASCII banner and version."""
         print(f"{CLI.S_BANNER}{CLI.BANNER}{CLI.RESET}")
-        print(f"{CLI.S_VERSION}{('v' + __version__).rjust(CLI.WIDTH)}{CLI.RESET}")
+        ver = ("v" + __version__).rjust(CLI.WIDTH)
+        print(f"{CLI.S_VERSION}{ver}{CLI.RESET}")
 
     @staticmethod
     def separator() -> None:
@@ -139,7 +141,10 @@ class CLI:
         print(f"  {CLI.S_SSH_INFO}{msg}{CLI.RESET}")
 
     @staticmethod
-    def prompt(label: str, value: Optional[str] = None, *, hint: str = "", default: str = "") -> str:
+    def prompt(
+        label: str, value: Optional[str] = None, *,
+        hint: str = "", default: str = "",
+    ) -> str:
         """Prompt for input, or display and return a pre-supplied value."""
         if value:
             print(f"{label}: {value}")
@@ -282,7 +287,8 @@ class Runner:
         if self.mode == "native":
             return cmd, isinstance(cmd, str)
         assert self.git_bash
-        sh = cmd if isinstance(cmd, str) else " ".join(shlex.quote(a) for a in cmd)
+        sh = (cmd if isinstance(cmd, str)
+              else " ".join(shlex.quote(a) for a in cmd))
         return [self.git_bash, "-c", sh], False
 
     def run(self, cmd: Union[List[str], str], **kwargs) -> int:
@@ -290,8 +296,10 @@ class Runner:
         args, shell = self._subprocess_args(cmd)
         return subprocess.run(args, shell=shell, **kwargs).returncode
 
-    def run_capture(self, cmd: Union[List[str], str], **kwargs) -> Tuple[int, str]:
-        """Run a command, capture stderr, and return (exit_code, stderr_text)."""
+    def run_capture(
+        self, cmd: Union[List[str], str], **kwargs,
+    ) -> Tuple[int, str]:
+        """Run a command, capture stderr, return (rc, text)."""
         args, shell = self._subprocess_args(cmd)
         r = subprocess.run(args, shell=shell, stderr=subprocess.PIPE, **kwargs)
         return r.returncode, (r.stderr or b"").decode(errors="replace")
@@ -315,7 +323,7 @@ class SSHConfig:
     def _has_unmanaged_host(
         text: str, alias: str, managed_blocks: Dict[str, Tuple[int, int]],
     ) -> bool:
-        """Return True if a Host entry for *alias* exists outside managed markers."""
+        """Check for a Host entry outside managed markers."""
         for m in re.finditer(r"^Host\s+(\S+)", text, re.MULTILINE):
             if m.group(1) != alias:
                 continue
@@ -340,7 +348,7 @@ class SSHConfig:
 
     @staticmethod
     def check_existing(ssh_config: Path, alias: str) -> str:
-        """Check SSH config for an existing alias, prompting to overwrite if found."""
+        """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
             return ""
 
@@ -360,7 +368,8 @@ class SSHConfig:
         if not has_managed:
             return text
 
-        if not cli.ask_yn(f"'{alias}' already configured by ssh-keyup. Overwrite?"):
+        msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
+        if not cli.ask_yn(msg):
             cli.cancel("No changes were made.")
             sys.exit(0)
 
@@ -437,7 +446,7 @@ class Deployer:
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
                  pub_key: str, accept_new: bool = False) -> Tuple[int, str]:
-        """Run the SSH deploy command. accept_new=True uses accept-new policy."""
+        """Run the SSH deploy command."""
         policy = "accept-new" if accept_new else "yes"
         cmd = ["ssh"]
         if not accept_new:
@@ -474,7 +483,9 @@ class Deployer:
                 rc, stderr = Deployer._ssh_cmd(
                     runner, remote, install_cmd, pub_key, accept_new=True)
                 if rc != 0:
-                    cli.fatal("\nStill can't connect. Check host and credentials.")
+                    cli.fatal(
+                        "\nStill can't connect. "
+                        "Check host and credentials.")
             else:
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
                 sys.exit(0)
@@ -483,7 +494,9 @@ class Deployer:
             rc, stderr = Deployer._ssh_cmd(
                 runner, remote, install_cmd, pub_key, accept_new=True)
             if rc != 0:
-                cli.fatal("\nSSH connection failed. Check host and credentials.")
+                cli.fatal(
+                    "\nSSH connection failed. "
+                    "Check host and credentials.")
         elif rc != 0:
             cli.fail("\nSSH connection failed. Check host and credentials.")
             if stderr.strip():
@@ -497,7 +510,10 @@ class Deployer:
 
 def sanitize_alias(name: str, quiet: bool = False) -> str:
     """Replace non-alphanumeric characters (except - and _) with dashes."""
-    clean = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "host"
+    clean = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in name
+    ) or "host"
     if not quiet and clean != name:
         cli.hint(f"(sanitized to: {clean})")
     return clean
@@ -512,18 +528,31 @@ def is_ip(value: str) -> bool:
         return False
 
 
+_DESCRIPTION = (
+    "Set up SSH key auth in one command.\n"
+    "Generates a per-host Ed25519 key pair, deploys it\n"
+    "to the remote host, and adds an entry to ~/.ssh/config."
+)
+
+_EPILOG = (
+    "examples:\n"
+    "  ssh-keyup"
+    "                                       interactive mode\n"
+    "  ssh-keyup --host 192.168.1.23 --user pi"
+    "         with IP address\n"
+    "  ssh-keyup --host rpi-5 --user trinity"
+    "           with hostname\n"
+    "  ssh-keyup --host rpi-5 --user pi --alias mypi"
+    "   custom alias"
+)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     p = argparse.ArgumentParser(
         prog="ssh-keyup",
-        description="SSH key auth for a new device in one command.\n"
-                    "Generates a per-host Ed25519 key pair, deploys it to the\n"
-                    "remote host, and adds an entry to ~/.ssh/config.",
-        epilog="examples:\n"
-               "  ssh-keyup                                       interactive mode\n"
-               "  ssh-keyup --host 192.168.1.23 --user pi         with IP address\n"
-               "  ssh-keyup --host rpi-5 --user trinity           with hostname\n"
-               "  ssh-keyup --host rpi-5 --user pi --alias mypi   custom alias",
+        description=_DESCRIPTION,
+        epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--version", action="version",
@@ -538,7 +567,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
-    """Collect remote host, username, and alias from args or interactive prompts."""
+    """Collect host, username, and alias from args or prompts."""
     host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
         cli.fatal("No host provided.")

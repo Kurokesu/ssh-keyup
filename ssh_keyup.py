@@ -347,10 +347,10 @@ class SSHConfig:
         )
 
     @staticmethod
-    def check_existing(ssh_config: Path, alias: str) -> str:
+    def check_existing(ssh_config: Path, alias: str) -> Tuple[str, bool]:
         """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
-            return ""
+            return "", False
 
         text = ssh_config.read_text(encoding="utf-8")
         blocks = SSHConfig._find_managed_blocks(text)
@@ -366,7 +366,7 @@ class SSHConfig:
             sys.exit(1)
 
         if not has_managed:
-            return text
+            return text, False
 
         msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
         if not cli.ask_yn(msg):
@@ -377,20 +377,12 @@ class SSHConfig:
         before = text[:start].rstrip("\n")
         after = text[end:].lstrip("\n")
         if before and after:
-            return before + "\n\n" + after
-        return before or after
+            return before + "\n\n" + after, True
+        return before or after, True
 
     @staticmethod
-    def update(
-        ssh_config: Path, alias: str, host: str, user: str,
-        file_alias: str, base_text: str,
-    ) -> None:
-        """Write or replace the SSH config entry for a managed host."""
-        block = SSHConfig._build_block(alias, host, user, file_alias)
-        if base_text:
-            text = base_text.rstrip("\n") + "\n\n" + block + "\n"
-        else:
-            text = block + "\n"
+    def _atomic_write(ssh_config: Path, text: str) -> None:
+        """Write text to SSH config atomically."""
         fd, tmp = tempfile.mkstemp(dir=ssh_config.parent, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
@@ -399,6 +391,24 @@ class SSHConfig:
         except BaseException:
             os.unlink(tmp)
             raise
+
+    @staticmethod
+    def update(
+        ssh_config: Path, alias: str, host: str, user: str,
+        file_alias: str, base_text: str,
+    ) -> None:
+        """Write or replace the SSH config entry."""
+        block = SSHConfig._build_block(alias, host, user, file_alias)
+        if base_text:
+            text = base_text.rstrip("\n") + "\n\n" + block + "\n"
+        else:
+            text = block + "\n"
+        SSHConfig._atomic_write(ssh_config, text)
+
+    @staticmethod
+    def revert(ssh_config: Path, base_text: str) -> None:
+        """Restore SSH config to its pre-update state."""
+        SSHConfig._atomic_write(ssh_config, base_text)
 
 
 class Deployer:
@@ -433,15 +443,16 @@ class Deployer:
         return "\n".join(lines)
 
     @staticmethod
-    def _handle_unknown_host(host: str, stderr: str) -> None:
-        """Show host key info and ask user to confirm connection."""
+    def _handle_unknown_host(host: str, stderr: str) -> bool:
+        """Show host key info, return True if user confirms."""
         info = Deployer._format_host_key_info(host, stderr)
         if info:
             for line in info.splitlines():
                 cli.ssh_warning(line)
         if not cli.ask_yn("Are you sure you want to continue connecting?"):
             cli.cancel()
-            sys.exit(0)
+            return False
+        return True
 
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
@@ -456,7 +467,7 @@ class Deployer:
         return runner.run_capture(cmd, input=pub_key.encode())
 
     @staticmethod
-    def deploy(runner: Runner, user: str, host: str, pub_path: Path) -> None:
+    def deploy(runner: Runner, user: str, host: str, pub_path: Path) -> bool:
         """Deploy the public key to the remote host in a single SSH session."""
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
@@ -483,29 +494,36 @@ class Deployer:
                 rc, stderr = Deployer._ssh_cmd(
                     runner, remote, install_cmd, pub_key, accept_new=True)
                 if rc != 0:
-                    cli.fatal(
-                        "\nStill can't connect. "
-                        "Check host and credentials.")
+                    cli.fail(
+                        "\nStill can't connect. Check host and credentials."
+                    )
+                    return False
             else:
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
-                sys.exit(0)
+                return False
         elif rc != 0 and Deployer._is_unknown_host(stderr):
-            Deployer._handle_unknown_host(host, stderr)
+            if not Deployer._handle_unknown_host(host, stderr):
+                return False
             rc, stderr = Deployer._ssh_cmd(
                 runner, remote, install_cmd, pub_key, accept_new=True)
             if rc != 0:
-                cli.fatal(
-                    "\nSSH connection failed. "
-                    "Check host and credentials.")
+                cli.fail(
+                    "\nSSH connection failed. Check host and credentials."
+                )
+                return False
         elif rc != 0:
-            cli.fail("\nSSH connection failed. Check host and credentials.")
+            cli.fail(
+                "\nSSH connection failed. Check host and credentials."
+            )
             if stderr.strip():
                 seen = set()  # type: set
                 for line in stderr.strip().splitlines():
                     if line not in seen and not line.startswith("debug1:"):
                         seen.add(line)
                         cli.ssh_info(line)
-            sys.exit(1)
+            return False
+
+        return True
 
 
 def sanitize_alias(name: str, quiet: bool = False) -> str:
@@ -624,7 +642,7 @@ def main() -> None:
 
         ssh_dir = Path.home() / ".ssh"
         ssh_config = ssh_dir / "config"
-        config_base = SSHConfig.check_existing(ssh_config, alias)
+        config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
 
         runner = Runner()
         runner.check()
@@ -633,17 +651,32 @@ def main() -> None:
         key_path = ssh_dir / f"id_ed25519_{file_alias}"
         pub_path = ssh_dir / f"id_ed25519_{file_alias}.pub"
 
+        key_generated = False
         if pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
             if cli.ask_yn("Regenerate key pair?"):
                 key_path.unlink(missing_ok=True)
                 pub_path.unlink()
                 generate_key(runner, key_path, pub_path, file_alias)
+                key_generated = True
         else:
             generate_key(runner, key_path, pub_path, file_alias)
+            key_generated = True
 
         cli.separator()
-        Deployer.deploy(runner, user, host, pub_path)
+        if not Deployer.deploy(runner, user, host, pub_path):
+            if key_generated:
+                cli.status("Cleaning up generated key pair...")
+                key_path.unlink(missing_ok=True)
+                pub_path.unlink(missing_ok=True)
+            if overwriting:
+                try:
+                    SSHConfig.revert(ssh_config, config_base)
+                except Exception as ex:
+                    cli.fail(
+                        f"SSH config cleanup failed: {ex}"
+                    )
+            sys.exit(1)
 
         try:
             SSHConfig.update(ssh_config, alias, host, user, file_alias,

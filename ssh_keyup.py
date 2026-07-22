@@ -352,6 +352,16 @@ class SSHConfig:
         )
 
     @staticmethod
+    def _splice_out(text: str, span: Tuple[int, int]) -> str:
+        """Remove a text span, collapsing surrounding blank lines."""
+        start, end = span
+        before = text[:start].rstrip("\n")
+        after = text[end:].lstrip("\n")
+        if before and after:
+            return before + "\n\n" + after
+        return before or after
+
+    @staticmethod
     def check_existing(ssh_config: Path, alias: str) -> Tuple[str, bool]:
         """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
@@ -378,12 +388,80 @@ class SSHConfig:
             cli.cancel("No changes were made.")
             sys.exit(0)
 
+        return SSHConfig._splice_out(text, blocks[alias]), True
+
+    @staticmethod
+    def collect_entries(text: str) -> List[Dict[str, str]]:
+        """Parse managed entries from SSH config text."""
+        entries = []
+        for m in re.finditer(
+            r"^#ssh-keyup:begin (\S+)(?: (\S+))?[^\n]*\n"
+            r"(.*?)^#ssh-keyup:end \1",
+            text, re.MULTILINE | re.DOTALL,
+        ):
+            body = m.group(3)
+
+            def field(name: str) -> str:
+                fm = re.search(rf"^\s*{name}\s+(\S+)", body, re.MULTILINE)
+                return fm.group(1) if fm else "?"
+
+            entries.append({
+                "alias": m.group(1),
+                "date": m.group(2) or "?",
+                "host": field("HostName"),
+                "user": field("User"),
+                "key": field("IdentityFile"),
+            })
+        return entries
+
+    @staticmethod
+    def list_entries(ssh_config: Path) -> None:
+        """Print managed entries as aligned columns."""
+        text = (ssh_config.read_text(encoding="utf-8")
+                if ssh_config.exists() else "")
+        entries = SSHConfig.collect_entries(text)
+        if not entries:
+            cli.msg("No entries managed by ssh-keyup.")
+            return
+
+        header = ("alias", "host", "user", "key", "added")
+        rows = [(e["alias"], e["host"], e["user"], e["key"], e["date"])
+                for e in entries]
+        widths = [max(len(row[i]) for row in rows + [header])
+                  for i in range(len(header))]
+        cli.hint("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for row in rows:
+            cli.msg("  ".join(v.ljust(w) for v, w in zip(row, widths)))
+
+    @staticmethod
+    def remove_entry(ssh_config: Path, alias: str) -> None:
+        """Remove a managed entry, optionally deleting its key pair."""
+        text = (ssh_config.read_text(encoding="utf-8")
+                if ssh_config.exists() else "")
+        blocks = SSHConfig._find_managed_blocks(text)
+        if alias not in blocks:
+            cli.fatal(f"No entry '{alias}' managed by ssh-keyup.")
+
         start, end = blocks[alias]
-        before = text[:start].rstrip("\n")
-        after = text[end:].lstrip("\n")
-        if before and after:
-            return before + "\n\n" + after, True
-        return before or after, True
+        key_m = re.search(r"^\s*IdentityFile\s+(\S+)", text[start:end],
+                          re.MULTILINE)
+
+        new_text = SSHConfig._splice_out(text, blocks[alias])
+        if new_text:
+            new_text = new_text.rstrip("\n") + "\n"
+        SSHConfig._atomic_write(ssh_config, new_text)
+        cli.msg(f"Removed '{alias}' from {ssh_config}")
+
+        if not key_m:
+            return
+        key_path = Path(key_m.group(1)).expanduser()
+        pub_path = Path(str(key_path) + ".pub")
+        if not (key_path.exists() or pub_path.exists()):
+            return
+        if cli.ask_yn(f"Also delete key pair {key_path.name}?"):
+            key_path.unlink(missing_ok=True)
+            pub_path.unlink(missing_ok=True)
+            cli.msg("Key pair deleted.")
 
     @staticmethod
     def _atomic_write(ssh_config: Path, text: str) -> None:
@@ -575,7 +653,11 @@ _EPILOG = (
     "           alias defaults to rpi-5\n"
     "  ssh-keyup 192.168.1.23"
     "                  prompts for username and alias\n"
-    "  ssh-keyup --host rpi-5 --user pi --alias mypi"
+    "  ssh-keyup --host rpi-5 --user pi --alias mypi\n"
+    "  ssh-keyup --list"
+    "                        show managed entries\n"
+    "  ssh-keyup --remove mypi"
+    "                 delete a managed entry"
 )
 
 
@@ -599,7 +681,18 @@ def parse_args() -> argparse.Namespace:
                    help="login username on the remote device")
     p.add_argument("--alias",
                    help="friendly name for ~/.ssh/config (default: hostname)")
+    p.add_argument("--list", action="store_true",
+                   help="list entries managed by ssh-keyup")
+    p.add_argument("--remove", metavar="ALIAS",
+                   help="remove a managed entry from ~/.ssh/config")
     args = p.parse_args()
+
+    if args.list and args.remove:
+        p.error("--list and --remove cannot be combined")
+    if ((args.list or args.remove)
+            and any((args.target, args.alias_pos,
+                     args.host, args.user, args.alias))):
+        p.error("--list/--remove cannot be combined with setup arguments")
 
     if args.target:
         user, host = split_target(args.target)
@@ -663,6 +756,14 @@ def main() -> None:
     try:
         cli.enable_ansi()
         args = parse_args()
+
+        ssh_config = Path.home() / ".ssh" / "config"
+        if args.list:
+            SSHConfig.list_entries(ssh_config)
+            return
+        if args.remove:
+            SSHConfig.remove_entry(ssh_config, args.remove)
+            return
 
         cli.banner()
         cli.separator()

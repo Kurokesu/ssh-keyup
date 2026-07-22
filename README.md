@@ -58,6 +58,13 @@ done
 
 Flags (`--host`, `--user`, `--alias`) work too, see `ssh-keyup --help`.
 
+List or remove entries ssh-keyup manages:
+
+```bash
+ssh-keyup --list
+ssh-keyup --remove mypi   # offers to delete the key pair too
+```
+
 ## Why?
 
 ```bash

@@ -44,16 +44,18 @@ Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemNam
 Skip the prompts by passing arguments:
 
 ```bash
-ssh-keyup --host 192.168.1.23 --user pi --alias mypi
+ssh-keyup pi@192.168.1.23 mypi   # user, host and alias in one go
 ```
 
 Or configure a whole fleet:
 
 ```bash
 for host in 192.168.1.10 192.168.1.11 192.168.1.12; do
-  ssh-keyup --host $host
+  ssh-keyup pi@$host
 done
 ```
+
+Flags (`--host`, `--user`, `--alias`) work too, see `ssh-keyup --help`.
 
 ## Why?
 

@@ -8,7 +8,7 @@ Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson or any Linux device in on
 
 Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/config` edits every time you set up a new device? `ssh-keyup` handles all three in a single interactive session.
 
-![ssh-keyup demo](demo.gif)
+![ssh-keyup demo](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/demo.gif)
 
 ## Quickstart
 
@@ -39,7 +39,7 @@ ssh mypi   # no password, ever again
 
 Or open [VSCode Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh), your `~/.ssh/config` is already set up. Press `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host**, pick your alias and get a full IDE on your remote device, no password:
 
-![VSCode Remote SSH](demo-vscode.gif)
+![VSCode Remote SSH](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/demo-vscode.gif)
 
 Skip the prompts by passing arguments:
 

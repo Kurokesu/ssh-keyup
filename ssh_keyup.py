@@ -21,6 +21,13 @@ from pathlib import Path
 from shutil import which
 from typing import Dict, List, Optional, Tuple, Union
 
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt
+else:
+    import termios
+    import tty
+
 
 class CLI:
     """Styled terminal output and interaction. All UI in one place."""
@@ -65,17 +72,15 @@ class CLI:
     @staticmethod
     def enable_ansi() -> None:
         """Enable ANSI escape sequences on Windows 10+."""
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            k = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            h = k.GetStdHandle(-11)
-            m = ctypes.c_ulong()
-            k.GetConsoleMode(h, ctypes.byref(m))
-            k.SetConsoleMode(h, m.value | 0x0004)
-        except Exception:
-            pass
+        if sys.platform == "win32":
+            try:
+                k = ctypes.windll.kernel32
+                h = k.GetStdHandle(-11)
+                m = ctypes.c_ulong()
+                k.GetConsoleMode(h, ctypes.byref(m))
+                k.SetConsoleMode(h, m.value | 0x0004)
+            except Exception:
+                pass
 
     @staticmethod
     def banner() -> None:
@@ -167,7 +172,6 @@ class CLI:
     def _read_key() -> str:
         """Read a single keypress."""
         if sys.platform == "win32":
-            import msvcrt
             ch = msvcrt.getwch()
             if ch == "\x03":
                 raise KeyboardInterrupt
@@ -177,8 +181,6 @@ class CLI:
                 return {"K": "left", "M": "right"}.get(msvcrt.getwch(), "")
             return "esc" if ch == "\x1b" else ch
         else:
-            import termios
-            import tty
             fd = sys.stdin.fileno()
             old = termios.tcgetattr(fd)
             try:

@@ -1,5 +1,6 @@
 # ssh-keyup
 
+![CI](https://github.com/Kurokesu/ssh-keyup/actions/workflows/ci.yml/badge.svg)
 ![PyPI](https://img.shields.io/pypi/v/ssh-keyup)
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)

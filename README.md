@@ -1,5 +1,6 @@
 # ssh-keyup
 
+![PyPI](https://img.shields.io/pypi/v/ssh-keyup)
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
@@ -14,7 +15,7 @@ Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows), and `~/.ssh/
 Install globally with pip:
 
 ```bash
-pip install git+https://github.com/Kurokesu/ssh-keyup.git
+pip install ssh-keyup
 
 ssh-keyup   # ready to use anywhere
 ```

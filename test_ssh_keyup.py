@@ -127,6 +127,20 @@ class TestRemoveEntry:
         assert "#ssh-keyup:begin jet" in text
         assert "Host manual" in text
 
+    def test_deletes_key_pair(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        cfg = ssh_dir / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        key = ssh_dir / "id_ed25519_mypi"
+        pub = ssh_dir / "id_ed25519_mypi.pub"
+        key.write_text("private")
+        pub.write_text("public")
+        ssh_keyup.SSHConfig.remove_entry(cfg, "mypi")
+        assert not key.exists()
+        assert not pub.exists()
+
     def test_missing_alias_exits(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)

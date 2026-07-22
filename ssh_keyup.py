@@ -435,7 +435,7 @@ class SSHConfig:
 
     @staticmethod
     def remove_entry(ssh_config: Path, alias: str) -> None:
-        """Remove a managed entry, optionally deleting its key pair."""
+        """Remove a managed entry and its key pair."""
         text = (ssh_config.read_text(encoding="utf-8")
                 if ssh_config.exists() else "")
         blocks = SSHConfig._find_managed_blocks(text)
@@ -456,12 +456,10 @@ class SSHConfig:
             return
         key_path = Path(key_m.group(1)).expanduser()
         pub_path = Path(str(key_path) + ".pub")
-        if not (key_path.exists() or pub_path.exists()):
-            return
-        if cli.ask_yn(f"Also delete key pair {key_path.name}?"):
+        if key_path.exists() or pub_path.exists():
             key_path.unlink(missing_ok=True)
             pub_path.unlink(missing_ok=True)
-            cli.msg("Key pair deleted.")
+            cli.msg(f"Deleted key pair {key_path.name}")
 
     @staticmethod
     def _atomic_write(ssh_config: Path, text: str) -> None:

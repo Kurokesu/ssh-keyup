@@ -19,7 +19,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 if sys.platform == "win32":
     import ctypes
@@ -60,14 +60,16 @@ class CLI:
     S_SUCCESS = GREEN
     S_STATUS = CYAN
 
+    STYLE_ATTRS = (
+        "BOLD", "DIM", "RESET", "GREEN", "RED", "YELLOW", "CYAN",
+        "HIDE_CUR", "SHOW_CUR", "S_BANNER", "S_VERSION", "S_SEPARATOR",
+        "S_HINT", "S_SSH_WARNING", "S_SSH_INFO", "S_SUCCESS", "S_STATUS",
+    )
+
     def __init__(self) -> None:
         if not sys.stdout.isatty():
-            CLI.BOLD = CLI.DIM = CLI.RESET = ""
-            CLI.GREEN = CLI.RED = CLI.YELLOW = CLI.CYAN = ""
-            CLI.HIDE_CUR = CLI.SHOW_CUR = ""
-            CLI.S_BANNER = CLI.S_VERSION = CLI.S_SEPARATOR = ""
-            CLI.S_HINT = CLI.S_SSH_WARNING = ""
-            CLI.S_SSH_INFO = CLI.S_SUCCESS = CLI.S_STATUS = ""
+            for attr in CLI.STYLE_ATTRS:
+                setattr(CLI, attr, "")
 
     @staticmethod
     def enable_ansi() -> None:
@@ -113,7 +115,7 @@ class CLI:
     @staticmethod
     def fatal(msg: str) -> None:
         """Print an error message and exit."""
-        cli.fail(msg)
+        CLI.fail(msg)
         sys.exit(1)
 
     @staticmethod
@@ -264,10 +266,10 @@ class Runner:
     def __init__(self) -> None:
         self.git_bash = Runner._find_git_bash()
         openssh = all(which(c) for c in ("ssh", "ssh-keygen"))
-        self.mode = (
+        self.mode: Optional[str] = (
             "native" if openssh
             else ("gitbash" if self.git_bash else None)
-        )  # type: Optional[str]
+        )
 
     def check(self) -> None:
         """Exit with guidance if no SSH tools are available."""
@@ -288,7 +290,8 @@ class Runner:
         """Prepare the command and shell flag for subprocess.run."""
         if self.mode == "native":
             return cmd, isinstance(cmd, str)
-        assert self.git_bash
+        if self.git_bash is None:
+            raise RuntimeError("gitbash mode without Git Bash path")
         sh = (cmd if isinstance(cmd, str)
               else " ".join(shlex.quote(a) for a in cmd))
         return [self.git_bash, "-c", sh], False
@@ -313,7 +316,7 @@ class SSHConfig:
     @staticmethod
     def _find_managed_blocks(text: str) -> Dict[str, Tuple[int, int]]:
         """Find ssh-keyup managed blocks in SSH config text."""
-        blocks = {}  # type: Dict[str, Tuple[int, int]]
+        blocks: Dict[str, Tuple[int, int]] = {}
         for m in re.finditer(
             r"^#ssh-keyup:begin (\S+)[^\n]*\n.*?^#ssh-keyup:end \1[^\n]*\n?",
             text, re.MULTILINE | re.DOTALL,
@@ -518,7 +521,7 @@ class Deployer:
                 "\nSSH connection failed. Check host and credentials."
             )
             if stderr.strip():
-                seen = set()  # type: set
+                seen: Set[str] = set()
                 for line in stderr.strip().splitlines():
                     if line not in seen and not line.startswith("debug1:"):
                         seen.add(line)
@@ -611,9 +614,7 @@ def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
     return host, user, alias
 
 
-def generate_key(
-    runner: Runner, key_path: Path, pub_path: Path, file_alias: str,
-) -> None:
+def generate_key(runner: Runner, key_path: Path) -> None:
     """Generate an Ed25519 key pair."""
     if runner.mode == "native":
         rc = runner.run([
@@ -621,7 +622,7 @@ def generate_key(
         ])
     else:
         rc = runner.run(
-            f"ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519_{file_alias}"
+            f"ssh-keygen -t ed25519 -N '' -f ~/.ssh/{key_path.name}"
         )
 
     if rc != 0:
@@ -659,10 +660,10 @@ def main() -> None:
             if cli.ask_yn("Regenerate key pair?"):
                 key_path.unlink(missing_ok=True)
                 pub_path.unlink()
-                generate_key(runner, key_path, pub_path, file_alias)
+                generate_key(runner, key_path)
                 key_generated = True
         else:
-            generate_key(runner, key_path, pub_path, file_alias)
+            generate_key(runner, key_path)
             key_generated = True
 
         cli.separator()

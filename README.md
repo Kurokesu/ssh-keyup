@@ -21,6 +21,11 @@ pip install ssh-keyup
 ssh-keyup   # ready to use anywhere
 ```
 
+> [!TIP]
+> If `ssh-keyup` is missing or runs an old version after install, the new
+> script sits in a folder outside PATH (pip warns about this). Add that folder
+> to PATH or use [pipx](https://pipx.pypa.io/): `pipx install ssh-keyup`.
+
 Or run directly without installing:
 
 ```bash

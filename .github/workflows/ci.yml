@@ -16,9 +16,24 @@ jobs:
       - name: Install tools
         run: pip install ruff mypy
       - name: Lint
-        run: ruff check ssh_keyup.py
+        run: ruff check .
       - name: Type check
         run: mypy ssh_keyup.py
+
+  test:
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run tests
+        run: pytest -q
 
   package-check:
     runs-on: ubuntu-latest

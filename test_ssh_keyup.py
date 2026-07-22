@@ -77,3 +77,71 @@ class TestIsIp:
     ])
     def test_is_ip(self, value, expected):
         assert ssh_keyup.is_ip(value) is expected
+
+
+SAMPLE_CONFIG = """# hand-written entry
+Host manual
+    HostName 10.0.0.1
+
+#ssh-keyup:begin mypi 2026-07-20
+Host mypi
+    HostName 192.168.1.23
+    User pi
+    IdentityFile ~/.ssh/id_ed25519_mypi
+#ssh-keyup:end mypi
+
+#ssh-keyup:begin jet 2026-07-21
+Host jet
+    HostName 192.168.1.30
+    User nvidia
+    IdentityFile ~/.ssh/id_ed25519_jet
+#ssh-keyup:end jet
+"""
+
+
+class TestCollectEntries:
+    def test_parses_managed_blocks(self):
+        entries = ssh_keyup.SSHConfig.collect_entries(SAMPLE_CONFIG)
+        assert [e["alias"] for e in entries] == ["mypi", "jet"]
+        assert entries[0]["host"] == "192.168.1.23"
+        assert entries[0]["user"] == "pi"
+        assert entries[0]["date"] == "2026-07-20"
+        assert entries[1]["key"] == "~/.ssh/id_ed25519_jet"
+
+    def test_ignores_unmanaged(self):
+        text = "Host manual\n    HostName 10.0.0.1\n"
+        assert ssh_keyup.SSHConfig.collect_entries(text) == []
+
+    def test_empty_text(self):
+        assert ssh_keyup.SSHConfig.collect_entries("") == []
+
+
+class TestRemoveEntry:
+    def test_removes_only_target_block(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        cfg = tmp_path / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        ssh_keyup.SSHConfig.remove_entry(cfg, "mypi")
+        text = cfg.read_text()
+        assert "mypi" not in text
+        assert "#ssh-keyup:begin jet" in text
+        assert "Host manual" in text
+
+    def test_missing_alias_exits(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        with pytest.raises(SystemExit) as exc:
+            ssh_keyup.SSHConfig.remove_entry(cfg, "ghost")
+        assert exc.value.code == 1
+
+
+class TestManageArgs:
+    def test_list_remove_conflict(self):
+        with pytest.raises(SystemExit) as exc:
+            parse(["--list", "--remove", "x"])
+        assert exc.value.code == 2
+
+    def test_list_with_setup_args(self):
+        with pytest.raises(SystemExit) as exc:
+            parse(["pi@1.2.3.4", "--list"])
+        assert exc.value.code == 2

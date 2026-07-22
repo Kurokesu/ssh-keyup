@@ -551,6 +551,14 @@ def is_ip(value: str) -> bool:
         return False
 
 
+def split_target(target: str) -> Tuple[Optional[str], str]:
+    """Split a [user@]host target into user and host."""
+    if "@" in target:
+        user, host = target.rsplit("@", 1)
+        return (user or None), host
+    return None, target
+
+
 _DESCRIPTION = (
     "Set up SSH key auth in one command.\n"
     "Generates a per-host Ed25519 key pair, deploys it\n"
@@ -560,13 +568,14 @@ _DESCRIPTION = (
 _EPILOG = (
     "examples:\n"
     "  ssh-keyup"
-    "                                       interactive mode\n"
-    "  ssh-keyup --host 192.168.1.23 --user pi"
-    "         with IP address\n"
-    "  ssh-keyup --host rpi-5 --user trinity"
-    "           with hostname\n"
+    "                                interactive mode\n"
+    "  ssh-keyup pi@192.168.1.23 mypi"
+    "          user, host and alias\n"
+    "  ssh-keyup trinity@rpi-5.local"
+    "           alias defaults to rpi-5\n"
+    "  ssh-keyup 192.168.1.23"
+    "                  prompts for username and alias\n"
     "  ssh-keyup --host rpi-5 --user pi --alias mypi"
-    "   custom alias"
 )
 
 
@@ -580,13 +589,33 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__version__}")
+    p.add_argument("target", nargs="?", metavar="[user@]host",
+                   help="remote device, e.g. pi@192.168.1.23")
+    p.add_argument("alias_pos", nargs="?", metavar="alias",
+                   help="friendly name for ~/.ssh/config (default: hostname)")
     p.add_argument("--host",
                    help="IP address or hostname of the remote device")
     p.add_argument("--user",
                    help="login username on the remote device")
     p.add_argument("--alias",
                    help="friendly name for ~/.ssh/config (default: hostname)")
-    return p.parse_args()
+    args = p.parse_args()
+
+    if args.target:
+        user, host = split_target(args.target)
+        if args.host:
+            p.error("host given both as positional and --host")
+        args.host = host
+        if user:
+            if args.user:
+                p.error("user given both as user@ prefix and --user")
+            args.user = user
+    if args.alias_pos:
+        if args.alias:
+            p.error("alias given both as positional and --alias")
+        args.alias = args.alias_pos
+
+    return args
 
 
 def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:

@@ -62,7 +62,7 @@ List or remove entries ssh-keyup manages:
 
 ```bash
 ssh-keyup --list
-ssh-keyup --remove mypi   # offers to delete the key pair too
+ssh-keyup --remove mypi   # deletes its key pair too
 ```
 
 ## Why?

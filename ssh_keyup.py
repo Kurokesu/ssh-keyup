@@ -362,10 +362,10 @@ class SSHConfig:
         return before or after
 
     @staticmethod
-    def check_existing(ssh_config: Path, alias: str) -> Tuple[str, bool]:
+    def check_existing(ssh_config: Path, alias: str) -> str:
         """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
-            return "", False
+            return ""
 
         text = ssh_config.read_text(encoding="utf-8")
         blocks = SSHConfig._find_managed_blocks(text)
@@ -381,14 +381,21 @@ class SSHConfig:
             sys.exit(1)
 
         if not has_managed:
-            return text, False
+            return text
 
         msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
         if not cli.ask_yn(msg):
             cli.cancel("No changes were made.")
             sys.exit(0)
 
-        return SSHConfig._splice_out(text, blocks[alias]), True
+        # Remove stale block from disk now, otherwise deploy's ssh
+        # would resolve the typed host through its old HostName.
+        base = SSHConfig._splice_out(text, blocks[alias])
+        try:
+            SSHConfig._atomic_write(ssh_config, base)
+        except Exception as ex:
+            cli.fatal(f"SSH config update failed: {ex}")
+        return base
 
     @staticmethod
     def collect_entries(text: str) -> List[Dict[str, str]]:
@@ -485,11 +492,6 @@ class SSHConfig:
         else:
             text = block + "\n"
         SSHConfig._atomic_write(ssh_config, text)
-
-    @staticmethod
-    def revert(ssh_config: Path, base_text: str) -> None:
-        """Restore SSH config to its pre-update state."""
-        SSHConfig._atomic_write(ssh_config, base_text)
 
 
 class Deployer:
@@ -773,7 +775,7 @@ def main() -> None:
 
         ssh_dir = Path.home() / ".ssh"
         ssh_config = ssh_dir / "config"
-        config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
+        config_base = SSHConfig.check_existing(ssh_config, alias)
 
         runner = Runner()
         runner.check()
@@ -800,13 +802,6 @@ def main() -> None:
                 cli.status("Cleaning up generated key pair...")
                 key_path.unlink(missing_ok=True)
                 pub_path.unlink(missing_ok=True)
-            if overwriting:
-                try:
-                    SSHConfig.revert(ssh_config, config_base)
-                except Exception as ex:
-                    cli.fail(
-                        f"SSH config cleanup failed: {ex}"
-                    )
             sys.exit(1)
 
         try:

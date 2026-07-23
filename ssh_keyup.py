@@ -753,6 +753,13 @@ def generate_key(runner: Runner, key_path: Path) -> None:
         cli.fatal("ssh-keygen failed.")
 
 
+def discard_keys(key_path: Path, pub_path: Path) -> None:
+    """Delete a key pair generated during a failed run."""
+    cli.status("Cleaning up generated key pair...")
+    key_path.unlink(missing_ok=True)
+    pub_path.unlink(missing_ok=True)
+
+
 def main() -> None:
     """Entry point: gather input, generate keys, deploy, update config."""
     try:
@@ -806,12 +813,12 @@ def main() -> None:
             try:
                 SSHConfig.remove_stale(ssh_config, config_base)
             except OSError as ex:
+                if key_generated:
+                    discard_keys(key_path, pub_path)
                 cli.fatal(f"SSH config update failed: {ex}")
         if not Deployer.deploy(runner, user, host, pub_path):
             if key_generated:
-                cli.status("Cleaning up generated key pair...")
-                key_path.unlink(missing_ok=True)
-                pub_path.unlink(missing_ok=True)
+                discard_keys(key_path, pub_path)
             sys.exit(1)
 
         try:

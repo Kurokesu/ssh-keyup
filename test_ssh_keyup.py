@@ -117,15 +117,22 @@ class TestCollectEntries:
 
 
 class TestCheckExisting:
-    def test_overwrite_removes_stale_block(self, tmp_path, monkeypatch):
+    def test_overwrite_splices_block_keeps_disk(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
-        base = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
-        text = cfg.read_text()
-        assert "#ssh-keyup:begin mypi" not in text
-        assert "#ssh-keyup:begin jet" in text
-        assert text == base
+        base, overwriting = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        assert overwriting is True
+        assert "#ssh-keyup:begin mypi" not in base
+        assert "#ssh-keyup:begin jet" in base
+        assert cfg.read_text() == SAMPLE_CONFIG
+
+    def test_no_managed_entry(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text("Host manual\n    HostName 10.0.0.1\n")
+        base, overwriting = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        assert overwriting is False
+        assert base == cfg.read_text()
 
     def test_decline_overwrite_keeps_config(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config"
@@ -135,6 +142,17 @@ class TestCheckExisting:
             ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
         assert exc.value.code == 0
         assert cfg.read_text() == SAMPLE_CONFIG
+
+    def test_remove_stale_writes_base(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        base, _ = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        ssh_keyup.SSHConfig.remove_stale(cfg, base)
+        text = cfg.read_text()
+        assert "#ssh-keyup:begin mypi" not in text
+        assert "#ssh-keyup:begin jet" in text
+        assert text == base
 
 
 class TestRemoveEntry:

@@ -362,10 +362,10 @@ class SSHConfig:
         return before or after
 
     @staticmethod
-    def check_existing(ssh_config: Path, alias: str) -> str:
+    def check_existing(ssh_config: Path, alias: str) -> Tuple[str, bool]:
         """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
-            return ""
+            return "", False
 
         text = ssh_config.read_text(encoding="utf-8")
         blocks = SSHConfig._find_managed_blocks(text)
@@ -381,21 +381,19 @@ class SSHConfig:
             sys.exit(1)
 
         if not has_managed:
-            return text
+            return text, False
 
         msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
         if not cli.ask_yn(msg):
             cli.cancel("No changes were made.")
             sys.exit(0)
 
-        # Remove stale block from disk now, otherwise deploy's ssh
-        # would resolve the typed host through its old HostName.
-        base = SSHConfig._splice_out(text, blocks[alias])
-        try:
-            SSHConfig._atomic_write(ssh_config, base)
-        except Exception as ex:
-            cli.fatal(f"SSH config update failed: {ex}")
-        return base
+        return SSHConfig._splice_out(text, blocks[alias]), True
+
+    @staticmethod
+    def remove_stale(ssh_config: Path, base_text: str) -> None:
+        """Write config with the overwritten entry spliced out."""
+        SSHConfig._atomic_write(ssh_config, base_text)
 
     @staticmethod
     def collect_entries(text: str) -> List[Dict[str, str]]:
@@ -774,7 +772,7 @@ def main() -> None:
 
         ssh_dir = Path.home() / ".ssh"
         ssh_config = ssh_dir / "config"
-        config_base = SSHConfig.check_existing(ssh_config, alias)
+        config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
 
         runner = Runner()
         runner.check()
@@ -796,6 +794,14 @@ def main() -> None:
             key_generated = True
 
         cli.separator()
+        # Remove stale entry now, otherwise deploy's ssh would resolve
+        # the typed host through its old HostName. Stays removed on
+        # deploy failure, user chose to overwrite.
+        if overwriting:
+            try:
+                SSHConfig.remove_stale(ssh_config, config_base)
+            except Exception as ex:
+                cli.fatal(f"SSH config update failed: {ex}")
         if not Deployer.deploy(runner, user, host, pub_path):
             if key_generated:
                 cli.status("Cleaning up generated key pair...")

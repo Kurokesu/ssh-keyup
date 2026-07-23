@@ -119,6 +119,7 @@ class TestCollectEntries:
 class TestRemoveEntry:
     def test_removes_only_target_block(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)
         ssh_keyup.SSHConfig.remove_entry(cfg, "mypi")
@@ -129,6 +130,7 @@ class TestRemoveEntry:
 
     def test_deletes_key_pair(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         ssh_dir = tmp_path / ".ssh"
         ssh_dir.mkdir()
         cfg = ssh_dir / "config"

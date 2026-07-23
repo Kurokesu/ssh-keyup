@@ -5,9 +5,11 @@
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
-Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson or any Linux device in one command.
+**Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson or any Linux device in one command.**
 
-Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/config` edits every time you set up a new device? `ssh-keyup` handles all three in a single interactive session.
+Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/config` edits every time you set up a new device?
+
+**`ssh-keyup`** handles all three in a single interactive session.
 
 ![ssh-keyup demo](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/demo.gif)
 

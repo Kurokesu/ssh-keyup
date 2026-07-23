@@ -5,3 +5,5 @@ build-backend = "setuptools.build_meta"
 # tool tables are ignored by setuptools, safe next to setup.cfg metadata
 [tool.ruff]
 line-length = 79
+# match python_requires, keeps fixes runtime safe on old Pythons
+target-version = "py38"

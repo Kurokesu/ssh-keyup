@@ -6,9 +6,13 @@
 #
 # Copyright (c) 2026, UAB Kurokesu. All rights reserved.
 
+# Makes modern annotation syntax runtime safe on Python 3.8
+from __future__ import annotations
+
 __version__ = "1.1.1"
 
 import argparse
+import contextlib
 import ipaddress
 import os
 import re
@@ -16,10 +20,9 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Optional, Set, Tuple, Union
 
 if sys.platform == "win32":
     import ctypes
@@ -75,14 +78,13 @@ class CLI:
     def enable_ansi() -> None:
         """Enable ANSI escape sequences on Windows 10+."""
         if sys.platform == "win32":
-            try:
+            # Best effort, colors just stay off if this fails
+            with contextlib.suppress(Exception):
                 k = ctypes.windll.kernel32
                 h = k.GetStdHandle(-11)
                 m = ctypes.c_ulong()
                 k.GetConsoleMode(h, ctypes.byref(m))
                 k.SetConsoleMode(h, m.value | 0x0004)
-            except Exception:
-                pass
 
     @staticmethod
     def banner() -> None:
@@ -149,7 +151,7 @@ class CLI:
 
     @staticmethod
     def prompt(
-        label: str, value: Optional[str] = None, *,
+        label: str, value: str | None = None, *,
         hint: str = "", default: str = "",
     ) -> str:
         """Prompt for input, or display and return a pre-supplied value."""
@@ -251,7 +253,7 @@ class Runner:
     """Run SSH commands natively or via Git Bash as fallback."""
 
     @staticmethod
-    def _find_git_bash() -> Optional[str]:
+    def _find_git_bash() -> str | None:
         """Locate Git Bash on Windows for use as an SSH fallback."""
         git = which("git")
         if not git:
@@ -266,7 +268,7 @@ class Runner:
     def __init__(self) -> None:
         self.git_bash = Runner._find_git_bash()
         openssh = all(which(c) for c in ("ssh", "ssh-keygen"))
-        self.mode: Optional[str] = (
+        self.mode: str | None = (
             "native" if openssh
             else ("gitbash" if self.git_bash else None)
         )
@@ -285,8 +287,8 @@ class Runner:
                 "sudo apt install openssh-client")
 
     def _subprocess_args(
-        self, cmd: Union[List[str], str],
-    ) -> Tuple[Union[List[str], str], bool]:
+        self, cmd: list[str] | str,
+    ) -> tuple[list[str] | str, bool]:
         """Prepare the command and shell flag for subprocess.run."""
         if self.mode == "native":
             return cmd, isinstance(cmd, str)
@@ -296,17 +298,19 @@ class Runner:
               else " ".join(shlex.quote(a) for a in cmd))
         return [self.git_bash, "-c", sh], False
 
-    def run(self, cmd: Union[List[str], str], **kwargs) -> int:
+    def run(self, cmd: list[str] | str, **kwargs) -> int:
         """Run a command and return the exit code."""
         args, shell = self._subprocess_args(cmd)
-        return subprocess.run(args, shell=shell, **kwargs).returncode
+        r = subprocess.run(args, shell=shell, check=False, **kwargs)
+        return r.returncode
 
     def run_capture(
-        self, cmd: Union[List[str], str], **kwargs,
-    ) -> Tuple[int, str]:
+        self, cmd: list[str] | str, **kwargs,
+    ) -> tuple[int, str]:
         """Run a command, capture stderr, return (rc, text)."""
         args, shell = self._subprocess_args(cmd)
-        r = subprocess.run(args, shell=shell, stderr=subprocess.PIPE, **kwargs)
+        r = subprocess.run(args, shell=shell, check=False,
+                           stderr=subprocess.PIPE, **kwargs)
         return r.returncode, (r.stderr or b"").decode(errors="replace")
 
 
@@ -314,9 +318,9 @@ class SSHConfig:
     """Manage ssh-keyup entries in ~/.ssh/config."""
 
     @staticmethod
-    def _find_managed_blocks(text: str) -> Dict[str, Tuple[int, int]]:
+    def _find_managed_blocks(text: str) -> dict[str, tuple[int, int]]:
         """Find ssh-keyup managed blocks in SSH config text."""
-        blocks: Dict[str, Tuple[int, int]] = {}
+        blocks: dict[str, tuple[int, int]] = {}
         for m in re.finditer(
             r"^#ssh-keyup:begin (\S+)[^\n]*\n.*?^#ssh-keyup:end \1[^\n]*\n?",
             text, re.MULTILINE | re.DOTALL,
@@ -326,7 +330,7 @@ class SSHConfig:
 
     @staticmethod
     def _has_unmanaged_host(
-        text: str, alias: str, managed_blocks: Dict[str, Tuple[int, int]],
+        text: str, alias: str, managed_blocks: dict[str, tuple[int, int]],
     ) -> bool:
         """Check for a Host entry outside managed markers."""
         for m in re.finditer(r"^Host\s+(\S+)", text, re.MULTILINE):
@@ -342,8 +346,9 @@ class SSHConfig:
         alias: str, host: str, user: str, file_alias: str,
     ) -> str:
         """Build the SSH config block text for a managed host entry."""
+        stamp = datetime.now(timezone.utc).astimezone().date().isoformat()
         return (
-            f"#ssh-keyup:begin {alias} {date.today().isoformat()}\n"
+            f"#ssh-keyup:begin {alias} {stamp}\n"
             f"Host {alias}\n"
             f"    HostName {host}\n"
             f"    User {user}\n"
@@ -352,7 +357,7 @@ class SSHConfig:
         )
 
     @staticmethod
-    def _splice_out(text: str, span: Tuple[int, int]) -> str:
+    def _splice_out(text: str, span: tuple[int, int]) -> str:
         """Remove a text span, collapsing surrounding blank lines."""
         start, end = span
         before = text[:start].rstrip("\n")
@@ -362,7 +367,7 @@ class SSHConfig:
         return before or after
 
     @staticmethod
-    def check_existing(ssh_config: Path, alias: str) -> Tuple[str, bool]:
+    def check_existing(ssh_config: Path, alias: str) -> tuple[str, bool]:
         """Check for an existing alias, prompt to overwrite."""
         if not ssh_config.exists():
             return "", False
@@ -396,7 +401,7 @@ class SSHConfig:
         SSHConfig._atomic_write(ssh_config, base_text)
 
     @staticmethod
-    def collect_entries(text: str) -> List[Dict[str, str]]:
+    def collect_entries(text: str) -> list[dict[str, str]]:
         """Parse managed entries from SSH config text."""
         entries = []
         for m in re.finditer(
@@ -406,7 +411,7 @@ class SSHConfig:
         ):
             body = m.group(3)
 
-            def field(name: str) -> str:
+            def field(name: str, body: str = body) -> str:
                 fm = re.search(rf"^\s*{name}\s+(\S+)", body, re.MULTILINE)
                 return fm.group(1) if fm else "?"
 
@@ -507,7 +512,7 @@ class Deployer:
                 and "REMOTE HOST IDENTIFICATION HAS CHANGED" not in stderr)
 
     @staticmethod
-    def _format_host_key_info(host: str, stderr: str) -> Optional[str]:
+    def _format_host_key_info(host: str, stderr: str) -> str | None:
         """Parse verbose SSH stderr into native-looking host key info."""
         key_m = re.search(r"Server host key: (\S+) (\S+)", stderr)
         if not key_m:
@@ -537,7 +542,7 @@ class Deployer:
 
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
-                 pub_key: str, accept_new: bool = False) -> Tuple[int, str]:
+                 pub_key: str, accept_new: bool = False) -> tuple[int, str]:
         """Run the SSH deploy command."""
         policy = "accept-new" if accept_new else "yes"
         cmd = ["ssh"]
@@ -597,7 +602,7 @@ class Deployer:
                 "\nSSH connection failed. Check host and credentials."
             )
             if stderr.strip():
-                seen: Set[str] = set()
+                seen: set[str] = set()
                 for line in stderr.strip().splitlines():
                     if line not in seen and not line.startswith("debug1:"):
                         seen.add(line)
@@ -627,7 +632,7 @@ def is_ip(value: str) -> bool:
         return False
 
 
-def split_target(target: str) -> Tuple[Optional[str], str]:
+def split_target(target: str) -> tuple[str | None, str]:
     """Split a [user@]host target into user and host."""
     if "@" in target:
         user, host = target.rsplit("@", 1)
@@ -708,7 +713,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
+def gather_input(args: argparse.Namespace) -> tuple[str, str, str]:
     """Collect host, username and alias from args or prompts."""
     host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
@@ -800,7 +805,7 @@ def main() -> None:
         if overwriting:
             try:
                 SSHConfig.remove_stale(ssh_config, config_base)
-            except Exception as ex:
+            except OSError as ex:
                 cli.fatal(f"SSH config update failed: {ex}")
         if not Deployer.deploy(runner, user, host, pub_path):
             if key_generated:
@@ -812,7 +817,7 @@ def main() -> None:
         try:
             SSHConfig.update(ssh_config, alias, host, user, file_alias,
                              config_base)
-        except Exception as ex:
+        except OSError as ex:
             cli.fatal(f"Key deployed, but SSH config update failed: {ex}")
         cli.msg(f"Config updated {ssh_config}")
 

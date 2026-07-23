@@ -103,5 +103,5 @@ ssh-keyup
 - Detects and recovers from **host key mismatches** (common after reflashing)
 - Handles re-runs gracefully: reuses existing keys or offers regeneration, detects duplicate config entries
 - Works with any device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers
-- **Zero dependencies**, Python 3.8+ standard library only
+- **Zero Python dependencies**, standard library only. Uses system OpenSSH (`ssh`, `ssh-keygen`)
 - Installs via `pip` or runs as a single script

@@ -640,24 +640,23 @@ def split_target(target: str) -> Tuple[Optional[str], str]:
 _DESCRIPTION = (
     "Set up SSH key auth in one command.\n"
     "Generates a per-host Ed25519 key pair, deploys it\n"
-    "to the remote host, and adds an entry to ~/.ssh/config."
+    "to the remote host and adds an entry to ~/.ssh/config."
 )
 
-_EPILOG = (
-    "examples:\n"
-    "  ssh-keyup"
-    "                                interactive mode\n"
-    "  ssh-keyup pi@192.168.1.23 mypi"
-    "          user, host and alias\n"
-    "  ssh-keyup trinity@rpi-5.local"
-    "           alias defaults to rpi-5\n"
-    "  ssh-keyup 192.168.1.23"
-    "                  prompts for username and alias\n"
-    "  ssh-keyup --host rpi-5 --user pi --alias mypi\n"
-    "  ssh-keyup --list"
-    "                        show managed entries\n"
-    "  ssh-keyup --remove mypi"
-    "                 delete a managed entry"
+_EXAMPLES = [
+    ("ssh-keyup", "interactive mode"),
+    ("ssh-keyup pi@192.168.1.23 mypi", "user, host and alias"),
+    ("ssh-keyup trinity@rpi-5.local", "alias defaults to rpi-5"),
+    ("ssh-keyup 192.168.1.23", "prompts for username and alias"),
+    ("ssh-keyup --host rpi-5 --user pi --alias mypi", "flags work too"),
+    ("ssh-keyup --list", "show managed entries"),
+    ("ssh-keyup --remove mypi", "delete a managed entry"),
+]
+
+_CMD_WIDTH = max(len(cmd) for cmd, _ in _EXAMPLES) + 2
+
+_EPILOG = "examples:\n" + "\n".join(
+    f"  {cmd.ljust(_CMD_WIDTH)}{desc}" for cmd, desc in _EXAMPLES
 )
 
 
@@ -712,7 +711,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def gather_input(args: argparse.Namespace) -> Tuple[str, str, str]:
-    """Collect host, username, and alias from args or prompts."""
+    """Collect host, username and alias from args or prompts."""
     host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
         cli.fatal("No host provided.")

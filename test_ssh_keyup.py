@@ -116,6 +116,27 @@ class TestCollectEntries:
         assert ssh_keyup.SSHConfig.collect_entries("") == []
 
 
+class TestCheckExisting:
+    def test_overwrite_removes_stale_block(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        base = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        text = cfg.read_text()
+        assert "#ssh-keyup:begin mypi" not in text
+        assert "#ssh-keyup:begin jet" in text
+        assert text == base
+
+    def test_decline_overwrite_keeps_config(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config"
+        cfg.write_text(SAMPLE_CONFIG)
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        with pytest.raises(SystemExit) as exc:
+            ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        assert exc.value.code == 0
+        assert cfg.read_text() == SAMPLE_CONFIG
+
+
 class TestRemoveEntry:
     def test_removes_only_target_block(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))

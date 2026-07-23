@@ -6,7 +6,7 @@
 #
 # Copyright (c) 2026, UAB Kurokesu. All rights reserved.
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 import argparse
 import ipaddress

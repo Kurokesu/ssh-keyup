@@ -369,14 +369,17 @@ class SSHConfig:
     @staticmethod
     def _build_block(
         alias: str, host: str, user: str, file_alias: str,
+        port: int = SSH_PORT,
     ) -> str:
         """Build the SSH config block text for a managed host entry."""
         stamp = datetime.now(timezone.utc).astimezone().date().isoformat()
+        port_line = f"    Port {port}\n" if port != SSH_PORT else ""
         return (
             f"#ssh-keyup:begin {alias} {stamp}\n"
             f"Host {alias}\n"
             f"    HostName {host}\n"
             f"    User {user}\n"
+            f"{port_line}"
             f"    IdentityFile ~/.ssh/id_ed25519_{file_alias}\n"
             f"#ssh-keyup:end {alias}\n"
         )
@@ -511,10 +514,10 @@ class SSHConfig:
     @staticmethod
     def update(
         ssh_config: Path, alias: str, host: str, user: str,
-        file_alias: str, base_text: str,
+        file_alias: str, base_text: str, port: int = SSH_PORT,
     ) -> None:
         """Write or replace the SSH config entry."""
-        block = SSHConfig._build_block(alias, host, user, file_alias)
+        block = SSHConfig._build_block(alias, host, user, file_alias, port)
         if base_text:
             text = base_text.rstrip("\n") + "\n\n" + block
         else:
@@ -567,22 +570,27 @@ class Deployer:
 
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
-                 pub_key: str, accept_new: bool = False) -> tuple[int, str]:
+                 pub_key: str, accept_new: bool = False,
+                 port: int = SSH_PORT) -> tuple[int, str]:
         """Run the SSH deploy command."""
         policy = "accept-new" if accept_new else "yes"
         cmd = ["ssh"]
         if not accept_new:
             cmd.append("-v")
+        if port != SSH_PORT:
+            cmd.extend(["-p", str(port)])
         cmd.extend(["-o", f"StrictHostKeyChecking={policy}",
                     remote, install_cmd])
         return runner.run_capture(cmd, input=pub_key.encode())
 
     @staticmethod
-    def deploy(runner: Runner, user: str, host: str, pub_path: Path) -> bool:
+    def deploy(runner: Runner, user: str, host: str, pub_path: Path,
+               port: int = SSH_PORT) -> bool:
         """Deploy the public key to the remote host in a single SSH session."""
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
-        cli.status(f"Deploying key to {user}@{host} ...")
+        shown = remote if port == SSH_PORT else f"{remote}:{port}"
+        cli.status(f"Deploying key to {shown} ...")
 
         install_cmd = (
             "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
@@ -592,7 +600,8 @@ class Deployer:
             "chmod 600 ~/.ssh/authorized_keys"
         )
 
-        rc, stderr = Deployer._ssh_cmd(runner, remote, install_cmd, pub_key)
+        rc, stderr = Deployer._ssh_cmd(runner, remote, install_cmd, pub_key,
+                                       port=port)
 
         if rc != 0 and Deployer._is_host_key_changed(stderr):
             for line in stderr.strip().splitlines():
@@ -601,9 +610,12 @@ class Deployer:
             cli.msg()
             if cli.ask_yn("Remove old host key and retry?"):
                 cli.status(f"Removing old host key for {host} ...")
-                runner.run(["ssh-keygen", "-R", host])
+                # Non-default ports are keyed as [host]:port in known_hosts
+                known = host if port == SSH_PORT else f"[{host}]:{port}"
+                runner.run(["ssh-keygen", "-R", known])
                 rc, stderr = Deployer._ssh_cmd(
-                    runner, remote, install_cmd, pub_key, accept_new=True)
+                    runner, remote, install_cmd, pub_key, accept_new=True,
+                    port=port)
                 if rc != 0:
                     cli.fail(
                         "\nStill can't connect. Check host and credentials."
@@ -616,7 +628,8 @@ class Deployer:
             if not Deployer._handle_unknown_host(host, stderr):
                 return False
             rc, stderr = Deployer._ssh_cmd(
-                runner, remote, install_cmd, pub_key, accept_new=True)
+                runner, remote, install_cmd, pub_key, accept_new=True,
+                port=port)
             if rc != 0:
                 cli.fail(
                     "\nSSH connection failed. Check host and credentials."
@@ -702,23 +715,17 @@ def resolve_ssh_target(runner: Runner, host: str) -> tuple[str, int] | None:
     return hostname, port or SSH_PORT
 
 
-def resolve_host(runner: Runner, host: str) -> tuple[str, str, int]:
-    """Map a typed host to (deploy target, probe host, probe port)."""
-    if is_ip(host):
-        return host, host, SSH_PORT
-
+def resolve_host(runner: Runner, host: str) -> tuple[str, int]:
+    """Resolve a typed host through ssh config to (hostname, port)."""
     target = resolve_ssh_target(runner, host)
-    if not target or target[0].lower() == host.lower():
-        return host, host, SSH_PORT
+    if not target:
+        return host, SSH_PORT
 
     rhost, rport = target
-    if rport != SSH_PORT:
-        # Generated block cannot express Port, so deploy through alias
-        return host, rhost, rport
-
-    # Alias stops resolving once its block is rewritten
-    cli.hint(f"'{host}' resolves to {rhost} via SSH config")
-    return rhost, rhost, SSH_PORT
+    if rhost.lower() != host.lower():
+        # Alias stops resolving once its block is rewritten
+        cli.hint(f"'{host}' resolves to {rhost} via SSH config")
+    return rhost, rport
 
 
 def check_reachable(host: str, port: int = SSH_PORT) -> None:
@@ -813,14 +820,14 @@ def parse_args() -> argparse.Namespace:
 
 def gather_input(
     args: argparse.Namespace, runner: Runner,
-) -> tuple[str, str, str]:
-    """Collect host, username and alias from args or prompts."""
+) -> tuple[str, str, str, int]:
+    """Collect host, username, alias and port from args or prompts."""
     typed = cli.prompt("Remote host", args.host, hint="IP or name")
     if not typed:
         cli.fatal("No host provided.")
 
-    host, probe_host, probe_port = resolve_host(runner, typed)
-    check_reachable(probe_host, probe_port)
+    host, port = resolve_host(runner, typed)
+    check_reachable(host, port)
 
     user = cli.prompt("Username", args.user)
     if not user:
@@ -838,7 +845,7 @@ def gather_input(
 
     alias = sanitize_alias(alias)
 
-    return host, user, alias
+    return host, user, alias, port
 
 
 def generate_key(runner: Runner, key_path: Path) -> None:
@@ -883,7 +890,7 @@ def main() -> None:
         runner = Runner()
         runner.check()
 
-        host, user, alias = gather_input(args, runner)
+        host, user, alias, port = gather_input(args, runner)
         file_alias = alias.replace("-", "_")
 
         cli.separator()
@@ -921,7 +928,7 @@ def main() -> None:
                     if key_generated:
                         discard_keys(key_path, pub_path)
                     cli.fatal(f"SSH config update failed: {ex}")
-            deployed = Deployer.deploy(runner, user, host, pub_path)
+            deployed = Deployer.deploy(runner, user, host, pub_path, port)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()
@@ -934,7 +941,7 @@ def main() -> None:
 
         try:
             SSHConfig.update(ssh_config, alias, host, user, file_alias,
-                             config_base)
+                             config_base, port)
         except OSError as ex:
             cli.fatal(f"Key deployed, but SSH config update failed: {ex}")
         cli.msg(f"Config updated {ssh_config}")

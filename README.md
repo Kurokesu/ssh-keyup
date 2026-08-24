@@ -96,6 +96,7 @@ ssh-keyup
 
 ## Features
 
+- Checks the host is **reachable** before generating keys, so typos and network problems surface early
 - Generates a per-host **Ed25519** key pair (`~/.ssh/id_ed25519_<alias>`)
 - Deploys public key to remote host in a **single SSH session**, only one password prompt
 - **Never touches your password**. `ssh-keyup` only pipes the public key and **SSH** handles password authentication directly through its own terminal

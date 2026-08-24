@@ -329,6 +329,15 @@ class Runner:
                            stderr=subprocess.PIPE, **kwargs)
         return r.returncode, (r.stderr or b"").decode(errors="replace")
 
+    def run_stdout(
+        self, cmd: list[str] | str, **kwargs,
+    ) -> tuple[int, str]:
+        """Run a command, capture stdout, return (rc, text)."""
+        args, shell = self._subprocess_args(cmd)
+        r = subprocess.run(args, shell=shell, check=False,
+                           stdout=subprocess.PIPE, **kwargs)
+        return r.returncode, (r.stdout or b"").decode(errors="replace")
+
 
 class SSHConfig:
     """Manage ssh-keyup entries in ~/.ssh/config."""
@@ -656,29 +665,64 @@ def split_target(target: str) -> tuple[str | None, str]:
     return None, target
 
 
-def check_reachable(host: str) -> None:
-    """Probe SSH port."""
-    cli.status("Checking connection ... ", end="")
+def probe_port(host: str, port: int) -> tuple[str, str] | None:
+    """Try a TCP connect, return (reason, detail) on failure."""
     try:
-        with socket.create_connection((host, SSH_PORT), CONNECT_TIMEOUT):
-            cli.ok()
-            return
+        with socket.create_connection((host, port), CONNECT_TIMEOUT):
+            return None
     except socket.gaierror:
-        reason = f"Could not resolve hostname '{host}'."
-        detail = "Check spelling or use an IP address instead."
+        return (f"Could not resolve hostname '{host}'.",
+                "Check spelling or use an IP address instead.")
     except ConnectionRefusedError:
-        reason = f"Connection refused by {host} on port {SSH_PORT}."
-        detail = "Host is up but no SSH server is listening."
+        return (f"Connection refused by {host} on port {port}.",
+                "Host is up but no SSH server is listening.")
     except socket.timeout:
-        reason = f"No response from {host} on port {SSH_PORT}."
-        detail = "Device may be off or on a different network."
+        return (f"No response from {host} on port {port}.",
+                "Device may be off or on a different network.")
     except OSError as ex:
-        reason = f"Cannot reach {host}."
-        detail = str(ex)
+        return f"Cannot reach {host}.", str(ex)
+
+
+def resolve_ssh_target(runner: Runner, host: str) -> tuple[str, int] | None:
+    """Resolve host through ssh config, return effective (hostname, port)."""
+    rc, out = runner.run_stdout(["ssh", "-G", host],
+                                stderr=subprocess.DEVNULL)
+    if rc != 0:
+        return None
+    hostname, port = None, None
+    for line in out.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "hostname":
+            hostname = value.strip()
+        elif key == "port":
+            with contextlib.suppress(ValueError):
+                port = int(value)
+    if not hostname:
+        return None
+    return hostname, port or SSH_PORT
+
+
+def check_reachable(runner: Runner, host: str) -> None:
+    """Probe SSH port, resolving through ssh config when needed."""
+    cli.status("Checking connection ... ", end="")
+    failure = probe_port(host, SSH_PORT)
+    if failure is None:
+        cli.ok()
+        return
+
+    # Name may only resolve through a ~/.ssh/config Host block
+    target = resolve_ssh_target(runner, host)
+    if target and target != (host.lower(), SSH_PORT):
+        retry = probe_port(*target)
+        if retry is None:
+            cli.ok()
+            cli.ssh_info(f"'{host}' resolves to {target[0]} via SSH config.")
+            return
+        failure = retry
 
     cli.failed()
-    cli.warn(reason)
-    cli.ssh_info(detail)
+    cli.warn(failure[0])
+    cli.ssh_info(failure[1])
     cli.msg()
     if not cli.ask_yn("Continue anyway?"):
         cli.cancel()
@@ -758,13 +802,15 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def gather_input(args: argparse.Namespace) -> tuple[str, str, str]:
+def gather_input(
+    args: argparse.Namespace, runner: Runner,
+) -> tuple[str, str, str]:
     """Collect host, username and alias from args or prompts."""
     host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
         cli.fatal("No host provided.")
 
-    check_reachable(host)
+    check_reachable(runner, host)
 
     user = cli.prompt("Username", args.user)
     if not user:
@@ -824,7 +870,10 @@ def main() -> None:
         cli.banner()
         cli.separator()
 
-        host, user, alias = gather_input(args)
+        runner = Runner()
+        runner.check()
+
+        host, user, alias = gather_input(args, runner)
         file_alias = alias.replace("-", "_")
 
         cli.separator()
@@ -833,8 +882,6 @@ def main() -> None:
         ssh_config = ssh_dir / "config"
         config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
 
-        runner = Runner()
-        runner.check()
         ssh_dir.mkdir(parents=True, exist_ok=True)
 
         key_path = ssh_dir / f"id_ed25519_{file_alias}"

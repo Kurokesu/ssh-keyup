@@ -702,23 +702,32 @@ def resolve_ssh_target(runner: Runner, host: str) -> tuple[str, int] | None:
     return hostname, port or SSH_PORT
 
 
-def check_reachable(runner: Runner, host: str) -> None:
-    """Probe SSH port, resolving through ssh config when needed."""
+def resolve_host(runner: Runner, host: str) -> tuple[str, str, int]:
+    """Map a typed host to (deploy target, probe host, probe port)."""
+    if is_ip(host):
+        return host, host, SSH_PORT
+
+    target = resolve_ssh_target(runner, host)
+    if not target or target[0].lower() == host.lower():
+        return host, host, SSH_PORT
+
+    rhost, rport = target
+    if rport != SSH_PORT:
+        # Generated block cannot express Port, so deploy through alias
+        return host, rhost, rport
+
+    # Alias stops resolving once its block is rewritten
+    cli.hint(f"'{host}' resolves to {rhost} via SSH config")
+    return rhost, rhost, SSH_PORT
+
+
+def check_reachable(host: str, port: int = SSH_PORT) -> None:
+    """Probe SSH port. On failure explain why and offer to continue."""
     cli.status("Checking connection ... ", end="")
-    failure = probe_port(host, SSH_PORT)
+    failure = probe_port(host, port)
     if failure is None:
         cli.ok()
         return
-
-    # Name may only resolve through a ~/.ssh/config Host block
-    target = resolve_ssh_target(runner, host)
-    if target and target != (host.lower(), SSH_PORT):
-        retry = probe_port(*target)
-        if retry is None:
-            cli.ok()
-            cli.ssh_info(f"'{host}' resolves to {target[0]} via SSH config.")
-            return
-        failure = retry
 
     cli.failed()
     cli.warn(failure[0])
@@ -806,11 +815,12 @@ def gather_input(
     args: argparse.Namespace, runner: Runner,
 ) -> tuple[str, str, str]:
     """Collect host, username and alias from args or prompts."""
-    host = cli.prompt("Remote host", args.host, hint="IP or name")
-    if not host:
+    typed = cli.prompt("Remote host", args.host, hint="IP or name")
+    if not typed:
         cli.fatal("No host provided.")
 
-    check_reachable(runner, host)
+    host, probe_host, probe_port = resolve_host(runner, typed)
+    check_reachable(probe_host, probe_port)
 
     user = cli.prompt("Username", args.user)
     if not user:
@@ -818,12 +828,12 @@ def gather_input(
 
     if args.alias:
         alias = cli.prompt("Alias", args.alias)
-    elif is_ip(host):
+    elif is_ip(typed):
         alias = cli.prompt("Alias")
         if not alias:
             cli.fatal("No alias provided.")
     else:
-        raw = host[:-6] if host.endswith(".local") else host
+        raw = typed[:-6] if typed.endswith(".local") else typed
         alias = cli.prompt("Alias", default=sanitize_alias(raw, quiet=True))
 
     alias = sanitize_alias(alias)

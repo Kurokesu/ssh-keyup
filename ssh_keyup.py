@@ -482,8 +482,6 @@ class SSHConfig:
                           re.MULTILINE)
 
         new_text = SSHConfig._splice_out(text, blocks[alias])
-        if new_text:
-            new_text = new_text.rstrip("\n") + "\n"
         SSHConfig._atomic_write(ssh_config, new_text)
         cli.msg(f"Removed '{alias}' from {ssh_config}")
 
@@ -498,7 +496,9 @@ class SSHConfig:
 
     @staticmethod
     def _atomic_write(ssh_config: Path, text: str) -> None:
-        """Write text to SSH config atomically."""
+        """Write text to SSH config atomically, one trailing newline."""
+        if text:
+            text = text.rstrip("\n") + "\n"
         fd, tmp = tempfile.mkstemp(dir=ssh_config.parent, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
@@ -516,9 +516,9 @@ class SSHConfig:
         """Write or replace the SSH config entry."""
         block = SSHConfig._build_block(alias, host, user, file_alias)
         if base_text:
-            text = base_text.rstrip("\n") + "\n\n" + block + "\n"
+            text = base_text.rstrip("\n") + "\n\n" + block
         else:
-            text = block + "\n"
+            text = block
         SSHConfig._atomic_write(ssh_config, text)
 
 

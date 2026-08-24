@@ -206,7 +206,7 @@ class CLI:
     @staticmethod
     def ask_yn(prompt: str, default: bool = False) -> bool:
         """Interactive yes/no selector with arrow keys."""
-        if not sys.stdin.isatty():
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
             return default
 
         sel = 0 if default else 1

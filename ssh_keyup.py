@@ -17,6 +17,7 @@ import ipaddress
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,9 @@ if sys.platform == "win32":
 else:
     import termios
     import tty
+
+SSH_PORT = 22
+CONNECT_TIMEOUT = 3.0
 
 
 class CLI:
@@ -62,11 +66,13 @@ class CLI:
     S_SSH_INFO = DIM
     S_SUCCESS = GREEN
     S_STATUS = CYAN
+    S_FAIL = RED
 
     STYLE_ATTRS = (
         "BOLD", "DIM", "RESET", "GREEN", "RED", "YELLOW", "CYAN",
         "HIDE_CUR", "SHOW_CUR", "S_BANNER", "S_VERSION", "S_SEPARATOR",
         "S_HINT", "S_SSH_WARNING", "S_SSH_INFO", "S_SUCCESS", "S_STATUS",
+        "S_FAIL",
     )
 
     def __init__(self) -> None:
@@ -126,9 +132,19 @@ class CLI:
         print(f"{CLI.S_SUCCESS}Done!{CLI.RESET} {msg}")
 
     @staticmethod
-    def status(msg: str) -> None:
+    def status(msg: str, end: str = "\n") -> None:
         """Print a status/progress message."""
-        print(f"{CLI.S_STATUS}{msg}{CLI.RESET}")
+        print(f"{CLI.S_STATUS}{msg}{CLI.RESET}", end=end, flush=True)
+
+    @staticmethod
+    def ok(msg: str = "ok") -> None:
+        """Finish a status line with a success result."""
+        print(f"{CLI.S_SUCCESS}{msg}{CLI.RESET}")
+
+    @staticmethod
+    def failed(msg: str = "failed") -> None:
+        """Finish a status line with a failure result."""
+        print(f"{CLI.S_FAIL}{msg}{CLI.RESET}")
 
     @staticmethod
     def cancel(msg: str = "") -> None:
@@ -640,6 +656,35 @@ def split_target(target: str) -> tuple[str | None, str]:
     return None, target
 
 
+def check_reachable(host: str) -> None:
+    """Probe SSH port."""
+    cli.status("Checking connection ... ", end="")
+    try:
+        with socket.create_connection((host, SSH_PORT), CONNECT_TIMEOUT):
+            cli.ok()
+            return
+    except socket.gaierror:
+        reason = f"Could not resolve hostname '{host}'."
+        detail = "Check spelling or use an IP address instead."
+    except ConnectionRefusedError:
+        reason = f"Connection refused by {host} on port {SSH_PORT}."
+        detail = "Host is up but no SSH server is listening."
+    except socket.timeout:
+        reason = f"No response from {host} on port {SSH_PORT}."
+        detail = "Device may be off or on a different network."
+    except OSError as ex:
+        reason = f"Cannot reach {host}."
+        detail = str(ex)
+
+    cli.failed()
+    cli.warn(reason)
+    cli.ssh_info(detail)
+    cli.msg()
+    if not cli.ask_yn("Continue anyway?"):
+        cli.cancel()
+        sys.exit(0)
+
+
 _DESCRIPTION = (
     "Set up SSH key auth in one command.\n"
     "Generates a per-host Ed25519 key pair, deploys it\n"
@@ -718,6 +763,8 @@ def gather_input(args: argparse.Namespace) -> tuple[str, str, str]:
     host = cli.prompt("Remote host", args.host, hint="IP or name")
     if not host:
         cli.fatal("No host provided.")
+
+    check_reachable(host)
 
     user = cli.prompt("Username", args.user)
     if not user:

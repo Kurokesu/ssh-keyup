@@ -903,14 +903,21 @@ def main() -> None:
         # Remove stale entry now, otherwise deploy's ssh would resolve
         # the typed host through its old HostName. Stays removed on
         # deploy failure, user chose to overwrite.
-        if overwriting:
-            try:
-                SSHConfig.remove_stale(ssh_config, config_base)
-            except OSError as ex:
-                if key_generated:
-                    discard_keys(key_path, pub_path)
-                cli.fatal(f"SSH config update failed: {ex}")
-        if not Deployer.deploy(runner, user, host, pub_path):
+        try:
+            if overwriting:
+                try:
+                    SSHConfig.remove_stale(ssh_config, config_base)
+                except OSError as ex:
+                    if key_generated:
+                        discard_keys(key_path, pub_path)
+                    cli.fatal(f"SSH config update failed: {ex}")
+            deployed = Deployer.deploy(runner, user, host, pub_path)
+        except KeyboardInterrupt:
+            if key_generated:
+                cli.msg()
+                discard_keys(key_path, pub_path)
+            raise
+        if not deployed:
             if key_generated:
                 discard_keys(key_path, pub_path)
             sys.exit(1)

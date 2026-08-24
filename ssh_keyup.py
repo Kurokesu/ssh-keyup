@@ -139,12 +139,12 @@ class CLI:
     @staticmethod
     def ok(msg: str = "ok") -> None:
         """Finish a status line with a success result."""
-        print(f"{CLI.S_SUCCESS}{msg}{CLI.RESET}")
+        print(f"{CLI.S_SUCCESS}{msg}{CLI.RESET}", flush=True)
 
     @staticmethod
     def failed(msg: str = "failed") -> None:
         """Finish a status line with a failure result."""
-        print(f"{CLI.S_FAIL}{msg}{CLI.RESET}")
+        print(f"{CLI.S_FAIL}{msg}{CLI.RESET}", flush=True)
 
     @staticmethod
     def cancel(msg: str = "") -> None:

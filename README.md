@@ -11,7 +11,7 @@ Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/c
 
 **`ssh-keyup`** handles all three in one interactive session.
 
-![One ssh-keyup session setting up a Raspberry Pi, then ssh to mypi alias logging in with no password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/demo.gif)
+![One ssh-keyup session setting up a Raspberry Pi, then ssh to mypi alias logging in with no password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/docs/demo.gif)
 
 ## Quickstart
 
@@ -46,7 +46,7 @@ ssh mypi   # no password, ever again
 
 **VSCode:** [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) works out of the box. Press `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host** and pick your alias for a full IDE on the device, no password:
 
-![VSCode connecting to the mypi alias over Remote SSH without a password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/demo-vscode.gif)
+![VSCode connecting to the mypi alias over Remote SSH without a password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/docs/demo-vscode.gif)
 
 ## Usage
 

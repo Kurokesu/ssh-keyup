@@ -22,14 +22,14 @@ jobs:
 
   test:
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.13"]
+        python-version: ["3.8", "3.9", "3.13"]
     runs-on: ubuntu-latest
+    # Official images cover 3.8, which setup-python does not
+    container: python:${{ matrix.python-version }}-slim
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Install pytest
         run: pip install pytest
       - name: Run tests
@@ -54,8 +54,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        # 3.8 is EOL and unavailable on current runner images,
-        # 3.9 is the oldest version CI can test
+        # setup-python has no 3.8 for current runner images
         python-version: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:

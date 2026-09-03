@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for ssh_keyup argument handling and helpers."""
 
+import contextlib
+import socket
 import sys
 
 import pytest
@@ -200,3 +202,161 @@ class TestManageArgs:
         with pytest.raises(SystemExit) as exc:
             parse(["pi@1.2.3.4", "--list"])
         assert exc.value.code == 2
+
+
+class FakeRunner:
+    """Stand-in for Runner, returns canned output and records commands."""
+
+    def __init__(self, rc=0, out=""):
+        self.rc = rc
+        self.out = out
+        self.cmds = []
+
+    def run_stdout(self, cmd, **kwargs):
+        self.cmds.append(cmd)
+        return self.rc, self.out
+
+    def run_capture(self, cmd, **kwargs):
+        self.cmds.append(cmd)
+        return self.rc, self.out
+
+
+SSH_G_OUTPUT = """\
+host raspberrypi.local
+hostname 192.168.1.23
+user pi
+port 2222
+"""
+
+
+class TestResolveSSHTarget:
+    def test_reads_hostname_and_port(self):
+        runner = FakeRunner(out=SSH_G_OUTPUT)
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
+            ("192.168.1.23", 2222)
+
+    def test_defaults_port_when_absent(self):
+        runner = FakeRunner(out="hostname 10.0.0.5\n")
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
+            ("10.0.0.5", 22)
+
+    def test_ignores_unparsable_port(self):
+        runner = FakeRunner(out="hostname 10.0.0.5\nport auto\n")
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
+            ("10.0.0.5", 22)
+
+    def test_none_when_ssh_fails(self):
+        runner = FakeRunner(rc=255)
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi") is None
+
+    def test_none_without_hostname(self):
+        runner = FakeRunner(out="user pi\nport 22\n")
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi") is None
+
+
+class TestResolveHost:
+    def test_substitutes_alias_target(self):
+        runner = FakeRunner(out=SSH_G_OUTPUT)
+        assert ssh_keyup.resolve_host(runner, "mypi") == \
+            ("192.168.1.23", 2222)
+
+    def test_falls_back_to_typed_host(self):
+        runner = FakeRunner(rc=255)
+        assert ssh_keyup.resolve_host(runner, "rpi-5.local") == \
+            ("rpi-5.local", 22)
+
+    def test_hints_when_alias_differs(self, capsys):
+        runner = FakeRunner(out=SSH_G_OUTPUT)
+        ssh_keyup.resolve_host(runner, "mypi")
+        assert "resolves to 192.168.1.23" in capsys.readouterr().out
+
+    def test_quiet_when_host_matches(self, capsys):
+        runner = FakeRunner(out="hostname RPI-5\n")
+        assert ssh_keyup.resolve_host(runner, "rpi-5") == ("RPI-5", 22)
+        assert capsys.readouterr().out == ""
+
+
+class TestBuildBlock:
+    def test_omits_port_line_on_default(self):
+        block = ssh_keyup.SSHConfig._build_block(
+            "mypi", "10.0.0.5", "pi", "mypi")
+        assert "Port" not in block
+        assert "    HostName 10.0.0.5\n" in block
+
+    def test_writes_port_line_when_custom(self):
+        block = ssh_keyup.SSHConfig._build_block(
+            "mypi", "10.0.0.5", "pi", "mypi", 2222)
+        assert "    Port 2222\n" in block
+
+
+class TestSSHCommand:
+    def test_omits_port_flag_on_default(self):
+        runner = FakeRunner()
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key")
+        assert "-p" not in runner.cmds[0]
+
+    def test_passes_port_flag_when_custom(self):
+        runner = FakeRunner()
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key",
+                                    port=2222)
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index("-p") + 1] == "2222"
+
+
+class TestAtomicWrite:
+    @pytest.mark.parametrize("text,expected", [
+        ("Host a\n\n\n", "Host a\n"),
+        ("Host a", "Host a\n"),
+        ("", ""),
+    ])
+    def test_normalizes_trailing_newline(self, tmp_path, text, expected):
+        cfg = tmp_path / "config"
+        ssh_keyup.SSHConfig._atomic_write(cfg, text)
+        assert cfg.read_text() == expected
+
+    def test_leaves_no_temp_file_behind(self, tmp_path):
+        cfg = tmp_path / "config"
+        ssh_keyup.SSHConfig._atomic_write(cfg, "Host a\n")
+        assert [p.name for p in tmp_path.iterdir()] == ["config"]
+
+
+class TestProbePort:
+    def test_none_when_connectable(self, monkeypatch):
+        monkeypatch.setattr(ssh_keyup.socket, "create_connection",
+                            lambda *a, **k: contextlib.nullcontext())
+        assert ssh_keyup.probe_port("rpi", 22) is None
+
+    @pytest.mark.parametrize("exc,fragment", [
+        (socket.gaierror(), "Could not resolve hostname"),
+        (ConnectionRefusedError(), "Connection refused"),
+        (socket.timeout(), "No response from"),
+        (OSError("network is down"), "Cannot reach"),
+    ])
+    def test_failure_reasons(self, monkeypatch, exc, fragment):
+        def boom(*a, **k):
+            raise exc
+        monkeypatch.setattr(ssh_keyup.socket, "create_connection", boom)
+        result = ssh_keyup.probe_port("rpi", 22)
+        assert result is not None
+        assert fragment in result[0]
+
+
+class TestCheckReachable:
+    def test_reports_ok_when_reachable(self, monkeypatch, capsys):
+        monkeypatch.setattr(ssh_keyup, "probe_port", lambda h, p: None)
+        ssh_keyup.check_reachable("rpi")
+        assert "ok" in capsys.readouterr().out
+
+    def test_continues_when_user_accepts(self, monkeypatch):
+        monkeypatch.setattr(ssh_keyup, "probe_port",
+                            lambda h, p: ("no route", "detail"))
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        ssh_keyup.check_reachable("rpi")
+
+    def test_exits_when_user_declines(self, monkeypatch):
+        monkeypatch.setattr(ssh_keyup, "probe_port",
+                            lambda h, p: ("no route", "detail"))
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        with pytest.raises(SystemExit) as exc:
+            ssh_keyup.check_reachable("rpi")
+        assert exc.value.code == 0

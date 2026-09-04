@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
-**Set up passwordless SSH on Raspberry Pi, NVIDIA Jetson or any Linux device in one command.**
+**Set up passwordless SSH in one command on any Linux or RouterOS device, such as Raspberry Pi, NVIDIA Jetson or MikroTik routers.**
 
 Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/config` edits every time you set up a new device?
 
@@ -55,9 +55,10 @@ ssh mypi   # no password, ever again
 ```bash
 ssh-keyup pi@192.168.1.23 mypi        # user, host and alias in one go
 ssh-keyup pi@192.168.1.23:2222 mypi   # non-default SSH port
+ssh-keyup admin@192.168.88.1 router   # RouterOS, detected automatically
 ```
 
-Flags (`--host`, `--user`, `--alias`, `--port`) work too, see `ssh-keyup --help`
+Flags (`--host`, `--user`, `--alias`, `--port`, `--os`) work too, see `ssh-keyup --help`
 
 ### Set up a fleet
 
@@ -89,7 +90,7 @@ ssh-keyup --remove mypi   # deletes its key pair too
 flowchart LR
     run["ssh-keyup"] --> check["check connection"]
     check --> gen["generate ed25519 key<br/>~/.ssh/id_ed25519_mypi"]
-    gen --> deploy["deploy public key<br/>target: ~/.ssh/authorized_keys"]
+    gen --> deploy["deploy public key<br/>~/.ssh/authorized_keys<br/>or /user/ssh-keys on RouterOS"]
     deploy --> config["update ssh config<br/>~/.ssh/config"]
 ```
 
@@ -101,6 +102,7 @@ flowchart LR
 - Deploys in a **single SSH session**, one password prompt total
 - Adds a named entry to `~/.ssh/config`, works instantly with `ssh <alias>` and VSCode Remote SSH
 - Checks host is **reachable** first, so typos surface before keys exist
+- Detects **RouterOS** and imports the key its way
 - Recovers from **host key mismatches** after a reflash
 - **Entry management**, list or retire devices without leaving stale keys behind
 - **Zero dependencies**, standard library plus system OpenSSH
@@ -126,6 +128,7 @@ Works once. Same key lands on every device, `~/.ssh` keeps default permissions t
 |  | ssh-keyup | ssh-copy-id |
 |---|:---:|:---:|
 | Works on Windows OpenSSH | yes | no |
+| Works with RouterOS | yes | no |
 | Ed25519 key per device | yes | no |
 | Sets `authorized_keys` permissions | yes | yes |
 | Writes `~/.ssh/config` alias | yes | no |
@@ -150,8 +153,12 @@ Run `ssh-keyup` again. It detects a changed key, shows new fingerprint for confi
 
 ### Does `--remove` clean up entries on the device?
 
-No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `authorized_keys` stays until removed there.
+No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `authorized_keys` (or `/user/ssh-keys` entry on RouterOS) stays until removed there.
 
 ### What devices are supported?
 
-Anything reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers.
+Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers. Any RouterOS 7.12 or newer device, MikroTik routers or CHR alike, is detected from SSH banner and gets its own key import, `--os routeros` forces it.
+
+### Anything to know about RouterOS?
+
+Login user needs `policy` permission (`full` group has it). Once a key exists, RouterOS stops accepting that user's password over SSH by default, WinBox and WebFig are unaffected. Password SSH can be turned back on under `/ip/ssh`.

@@ -30,6 +30,25 @@ class TestSplitTarget:
         assert ssh_keyup.split_target("a@b@host") == ("a@b", "host")
 
 
+class TestSplitHostPort:
+    @pytest.mark.parametrize("value, expected", [
+        ("rpi-5.local", ("rpi-5.local", None)),
+        ("192.168.1.23:2222", ("192.168.1.23", 2222)),
+        ("fe80::1", ("fe80::1", None)),
+        ("[fe80::1]", ("fe80::1", None)),
+        ("[fe80::1]:2222", ("fe80::1", 2222)),
+    ])
+    def test_split(self, value, expected):
+        assert ssh_keyup.split_host_port(value) == expected
+
+    @pytest.mark.parametrize("value", [
+        "host:", "host:ssh", "host:0", "host:65536", "[fe80::1", "[fe80::1]x",
+    ])
+    def test_rejects_bad_input(self, value):
+        with pytest.raises(ValueError):
+            ssh_keyup.split_host_port(value)
+
+
 class TestParseArgs:
     def test_positional_target_and_alias(self):
         args = parse(["pi@192.168.1.23", "mypi"])
@@ -46,6 +65,20 @@ class TestParseArgs:
     def test_flags_still_work(self):
         args = parse(["--host", "rpi-5", "--user", "pi", "--alias", "mypi"])
         assert (args.host, args.user, args.alias) == ("rpi-5", "pi", "mypi")
+
+    def test_port_flag(self):
+        assert parse(["rpi-5", "--port", "2222"]).port == 2222
+        assert parse(["rpi-5"]).port is None
+
+    @pytest.mark.parametrize("argv", [
+        ["rpi-5", "--port", "0"],
+        ["rpi-5", "--port", "70000"],
+        ["--list", "--port", "2222"],
+    ])
+    def test_port_errors(self, argv):
+        with pytest.raises(SystemExit) as exc:
+            parse(argv)
+        assert exc.value.code == 2
 
     @pytest.mark.parametrize("argv", [
         ["1.2.3.4", "--host", "5.6.7.8"],
@@ -253,6 +286,18 @@ class TestResolveSSHTarget:
         runner = FakeRunner(out="user pi\nport 22\n")
         assert ssh_keyup.resolve_ssh_target(runner, "mypi") is None
 
+    def test_passes_explicit_port_to_ssh(self):
+        runner = FakeRunner(out="hostname 10.0.0.5\nport 2200\n")
+        assert ssh_keyup.resolve_ssh_target(runner, "mypi", 2200) == \
+            ("10.0.0.5", 2200)
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index("-p") + 1] == "2200"
+
+    def test_omits_port_flag_without_explicit_port(self):
+        runner = FakeRunner(out="hostname 10.0.0.5\n")
+        ssh_keyup.resolve_ssh_target(runner, "mypi")
+        assert "-p" not in runner.cmds[0]
+
 
 class TestResolveHost:
     def test_substitutes_alias_target(self):
@@ -265,6 +310,11 @@ class TestResolveHost:
         assert ssh_keyup.resolve_host(runner, "rpi-5.local") == \
             ("rpi-5.local", 22)
 
+    def test_falls_back_to_explicit_port(self):
+        runner = FakeRunner(rc=255)
+        assert ssh_keyup.resolve_host(runner, "rpi-5.local", 2222) == \
+            ("rpi-5.local", 2222)
+
     def test_hints_when_alias_differs(self, capsys):
         runner = FakeRunner(out=SSH_G_OUTPUT)
         ssh_keyup.resolve_host(runner, "mypi")
@@ -274,6 +324,54 @@ class TestResolveHost:
         runner = FakeRunner(out="hostname RPI-5\n")
         assert ssh_keyup.resolve_host(runner, "rpi-5") == ("RPI-5", 22)
         assert capsys.readouterr().out == ""
+
+
+class TestGatherInput:
+    @staticmethod
+    def _gather(monkeypatch, argv):
+        seen = {}
+
+        def fake_resolve(runner, host, port=None):
+            seen["host"], seen["port"] = host, port
+            return host, port or 22
+
+        monkeypatch.setattr(ssh_keyup, "resolve_host", fake_resolve)
+        monkeypatch.setattr(ssh_keyup, "check_reachable", lambda h, p: None)
+        monkeypatch.setattr("builtins.input", lambda *_: "")
+        result = ssh_keyup.gather_input(parse(argv), FakeRunner())
+        return result, seen
+
+    def test_port_from_host(self, monkeypatch):
+        (host, _, _, port), seen = self._gather(
+            monkeypatch, ["pi@10.0.0.5:2222", "mypi"])
+        assert (host, port) == ("10.0.0.5", 2222)
+        assert seen == {"host": "10.0.0.5", "port": 2222}
+
+    def test_port_from_flag(self, monkeypatch):
+        (host, _, _, port), _ = self._gather(
+            monkeypatch, ["pi@10.0.0.5", "mypi", "--port", "2222"])
+        assert (host, port) == ("10.0.0.5", 2222)
+
+    def test_same_port_both_ways(self, monkeypatch):
+        (_, _, _, port), _ = self._gather(
+            monkeypatch, ["pi@10.0.0.5:2222", "mypi", "--port", "2222"])
+        assert port == 2222
+
+    def test_conflicting_ports_exit(self, monkeypatch, capsys):
+        with pytest.raises(SystemExit):
+            self._gather(
+                monkeypatch, ["pi@10.0.0.5:2222", "mypi", "--port", "2200"])
+        assert "both" in capsys.readouterr().out
+
+    def test_bad_port_in_host_exits(self, monkeypatch, capsys):
+        with pytest.raises(SystemExit):
+            self._gather(monkeypatch, ["pi@10.0.0.5:ssh", "mypi"])
+        assert "Invalid port" in capsys.readouterr().out
+
+    def test_alias_default_ignores_port(self, monkeypatch):
+        (_, _, alias, _), _ = self._gather(
+            monkeypatch, ["pi@rpi-5.local:2222"])
+        assert alias == "rpi-5"
 
 
 class TestBuildBlock:

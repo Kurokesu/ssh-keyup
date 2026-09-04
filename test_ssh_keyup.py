@@ -302,6 +302,79 @@ class TestSSHCommand:
         cmd = runner.cmds[0]
         assert cmd[cmd.index("-p") + 1] == "2222"
 
+    @pytest.mark.parametrize("accept_new", [False, True])
+    def test_always_verbose(self, accept_new):
+        runner = FakeRunner()
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key",
+                                    accept_new=accept_new)
+        assert "-v" in runner.cmds[0]
+
+
+# Verbose stderr after a successful login and a failing remote command
+AUTH_OK_STDERR = """\
+OpenSSH_9.5p2, LibreSSL 3.8.2
+debug1: Connecting to router [192.168.188.1] port 22.
+Authenticated to router ([192.168.188.1]:22) using "password".
+debug1: Sending command: mkdir -p ~/.ssh && chmod 700 ~/.ssh
+bad command name mkdir (line 1 column 1)
+Transferred: sent 2204, received 2776 bytes, in 0.1 seconds
+Bytes per second: sent 31485.7, received 39657.2
+debug1: Exit status 1
+"""
+
+# Verbose stderr after a rejected password
+AUTH_FAIL_STDERR = """\
+OpenSSH_9.5p2, LibreSSL 3.8.2
+debug1: Connecting to pi [10.0.0.5] port 22.
+Permission denied, please try again.
+Permission denied, please try again.
+pi@10.0.0.5: Permission denied (publickey,password).
+"""
+
+
+class TestReportFailure:
+    def test_detects_login(self):
+        assert ssh_keyup.Deployer._is_authenticated(AUTH_OK_STDERR)
+        assert not ssh_keyup.Deployer._is_authenticated(AUTH_FAIL_STDERR)
+
+    def test_error_lines_keep_remote_output_only(self):
+        lines = ssh_keyup.Deployer._error_lines(AUTH_OK_STDERR)
+        assert lines == ["bad command name mkdir (line 1 column 1)"]
+
+    def test_error_lines_dedupe_ssh_errors(self):
+        lines = ssh_keyup.Deployer._error_lines(AUTH_FAIL_STDERR)
+        assert lines == [
+            "Permission denied, please try again.",
+            "pi@10.0.0.5: Permission denied (publickey,password).",
+        ]
+
+    def test_remote_failure_is_not_a_login_failure(self, capsys):
+        ssh_keyup.Deployer._report_failure(AUTH_OK_STDERR)
+        out = capsys.readouterr().out
+        assert "install command failed" in out
+        assert "bad command name mkdir" in out
+        assert "credentials" not in out
+
+    def test_login_failure_names_credentials(self, capsys):
+        ssh_keyup.Deployer._report_failure(AUTH_FAIL_STDERR)
+        out = capsys.readouterr().out
+        assert "Check host and credentials" in out
+        assert "Permission denied (publickey,password)" in out
+        assert "OpenSSH_" not in out
+
+
+class TestDeploy:
+    def test_remote_failure_reported_after_login(self, tmp_path, capsys):
+        pub = tmp_path / "id_ed25519_r.pub"
+        pub.write_text("ssh-ed25519 AAAA test\n")
+        runner = FakeRunner(rc=1, out=AUTH_OK_STDERR)
+        assert ssh_keyup.Deployer.deploy(runner, "admin", "router", pub) \
+            is False
+        out = capsys.readouterr().out
+        assert "install command failed" in out
+        assert "credentials" not in out
+        assert len(runner.cmds) == 1
+
 
 class TestAtomicWrite:
     @pytest.mark.parametrize("text,expected", [

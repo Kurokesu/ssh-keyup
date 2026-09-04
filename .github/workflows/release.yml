@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 jobs:
-  pypi-publish:
+  pypi:
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -25,3 +25,19 @@ jobs:
           python -m build
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Skip when release was created by hand before tag push
+      - name: Draft GitHub release with generated notes
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && exit 0
+          gh release create "$GITHUB_REF_NAME" --draft --generate-notes \
+            --title "$GITHUB_REF_NAME"

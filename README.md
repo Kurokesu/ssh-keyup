@@ -123,7 +123,7 @@ Works once. Same key lands on every device, `~/.ssh` keeps default permissions t
 
 ### Why not ssh-copy-id?
 
-`ssh-copy-id` appends a key to `authorized_keys` and stops there. Windows OpenSSH does not ship it at all.
+`ssh-copy-id` appends a key to `authorized_keys` and stops there. Windows OpenSSH does not ship it at all and RouterOS has no `authorized_keys` to append to.
 
 |  | ssh-keyup | ssh-copy-id |
 |---|:---:|:---:|
@@ -159,6 +159,18 @@ No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `a
 
 Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers. Any RouterOS 7.12 or newer device, MikroTik routers or CHR alike, is detected from SSH banner and gets its own key import, `--os routeros` forces it.
 
-### Anything to know about RouterOS?
+### How do I add an SSH key to a MikroTik router from Windows?
 
-Login user needs `policy` permission (`full` group has it). Once a key exists, RouterOS stops accepting that user's password over SSH by default, WinBox and WebFig are unaffected. Password SSH can be turned back on under `/ip/ssh`.
+By hand on RouterOS 7:
+
+```powershell
+ssh-keygen -t ed25519
+scp $env:USERPROFILE\.ssh\id_ed25519.pub admin@192.168.88.1:
+ssh admin@192.168.88.1 "/user/ssh-keys/import public-key-file=id_ed25519.pub user=admin"
+```
+
+Works, with two password prompts and the default key shared across devices again. `ssh-keyup admin@192.168.88.1 router` does it in one session with one prompt, RouterOS is detected from SSH banner. Login user needs `policy` permission (`full` group has it) and firmware 7.12 or newer, older RouterOS rejects Ed25519 keys with `unable to load key file (wrong format or bad passphrase)`.
+
+### Why does RouterOS refuse my password over SSH after adding a key?
+
+That is the default: once a user has a key, RouterOS stops accepting that user's password over SSH. WinBox and WebFig are unaffected, and password SSH can be turned back on under `/ip/ssh`.

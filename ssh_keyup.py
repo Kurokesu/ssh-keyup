@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # ssh-keyup - Passwordless SSH setup for
-# Raspberry Pi, NVIDIA Jetson, or any Linux device
+# Raspberry Pi, NVIDIA Jetson, RouterOS or any Linux device
 #
 # Copyright (c) 2026, UAB Kurokesu. All rights reserved.
 
@@ -12,7 +12,9 @@ from __future__ import annotations
 __version__ = "1.2.0"
 
 import argparse
+import base64
 import contextlib
+import hashlib
 import ipaddress
 import os
 import re
@@ -22,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from shutil import which
 
@@ -35,6 +38,48 @@ else:
 SSH_PORT = 22
 MAX_PORT = 65535
 CONNECT_TIMEOUT = 3.0
+BANNER_TIMEOUT = 1.0
+
+
+class TargetOS(Enum):
+    """Device families that need their own key install command."""
+
+    LINUX = "linux"
+    ROUTEROS = "routeros"
+
+    @property
+    def label(self) -> str:
+        return {"linux": "Linux", "routeros": "RouterOS"}[self.value]
+
+
+BANNER_MARKERS = {"ROSSSH": TargetOS.ROUTEROS}
+
+
+def os_from_banner(banner: str) -> TargetOS:
+    """Map an SSH identification string to a target OS, Linux by default."""
+    for marker, target_os in BANNER_MARKERS.items():
+        if marker in banner:
+            return target_os
+    return TargetOS.LINUX
+
+
+def os_from_ssh_verbose(stderr: str) -> TargetOS:
+    """Same detection from ssh -v output, which echoes the remote banner."""
+    m = re.search(r"remote software version (\S+)", stderr)
+    return os_from_banner(m.group(1)) if m else TargetOS.LINUX
+
+
+def key_fingerprint(pub_key: str) -> str:
+    """SHA256 fingerprint of a public key line, padded as RouterOS shows it.
+
+    Empty for a malformed line, the device then rejects the key itself.
+    """
+    try:
+        blob = base64.b64decode(pub_key.split()[1], validate=True)
+    except (IndexError, ValueError):
+        return ""
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode()
+    return f"SHA256:{digest}"
 
 
 class CLI:
@@ -590,14 +635,15 @@ class Deployer:
         seen: set[str] = set()
         lines = []
         for line in stderr.strip().splitlines():
-            if line.startswith(Deployer._SSH_NOISE) or line in seen:
+            if (not line.strip() or line.startswith(Deployer._SSH_NOISE)
+                    or line in seen):
                 continue
             seen.add(line)
             lines.append(line)
         return lines
 
     @staticmethod
-    def _report_failure(stderr: str) -> None:
+    def _report_failure(stderr: str, target_os: TargetOS) -> None:
         """Explain failed deploy, a remote error is not a login error."""
         if Deployer._is_authenticated(stderr):
             cli.fail("\nLogged in, but install command failed on device.")
@@ -605,10 +651,61 @@ class Deployer:
             cli.fail("\nSSH connection failed. Check host and credentials.")
         for line in Deployer._error_lines(stderr):
             cli.ssh_info(line)
+        if target_os is not TargetOS.ROUTEROS:
+            return
+        if "unable to load key" in stderr:
+            cli.hint("Ed25519 keys need RouterOS 7.12 or newer.")
+        elif "not enough permissions" in stderr:
+            cli.hint("User needs the policy permission, "
+                     "the full group has it.")
+
+    @staticmethod
+    def _succeeded(rc: int, output: str, target_os: TargetOS) -> bool:
+        """Judge install by exit status, plus remote output on RouterOS.
+
+        RouterOS reports errors as text with exit status 0 and a working
+        install prints nothing, so any remote output means failure there.
+        """
+        if rc != 0:
+            return False
+        if target_os is TargetOS.ROUTEROS:
+            return not Deployer._error_lines(output)
+        return True
+
+    @staticmethod
+    def _install_command(target_os: TargetOS, user: str,
+                         pub_key: str) -> tuple[str, bytes]:
+        """Return remote install command and what to feed its stdin.
+
+        RouterOS console runs whatever arrives on stdin, so it gets none.
+        """
+        if target_os is TargetOS.LINUX:
+            cmd = (
+                "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+                "key=$(cat) && "
+                "if ! grep -qF \"$key\" ~/.ssh/authorized_keys 2>/dev/null; "
+                "then printf '%s\\n' \"$key\" >> ~/.ssh/authorized_keys; fi "
+                "&& chmod 600 ~/.ssh/authorized_keys"
+            )
+            return cmd, pub_key.encode()
+        elif target_os is TargetOS.ROUTEROS:
+            # Pre-7.20 firmware lacks fingerprint, n stays 0 and add runs.
+            # Add sits outside on-error so its message is not swallowed.
+            fp = key_fingerprint(pub_key)
+            cmd = (
+                ":local n 0; "
+                ":do { :set n [:len [/user/ssh-keys/find where "
+                f'user="{user}" and fingerprint="{fp}"]] }} on-error={{}}; '
+                ":if ($n = 0) do={ "
+                f'/user/ssh-keys/add user="{user}" key="{pub_key}" }}'
+            )
+            return cmd, b""
+        else:
+            raise ValueError(f"unhandled target OS {target_os}")
 
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
-                 pub_key: str, accept_new: bool = False,
+                 stdin: bytes, accept_new: bool = False,
                  port: int = SSH_PORT) -> tuple[int, str]:
         """Run SSH deploy command, verbose so failures can be explained."""
         policy = "accept-new" if accept_new else "yes"
@@ -617,26 +714,25 @@ class Deployer:
             cmd.extend(["-p", str(port)])
         cmd.extend(["-o", f"StrictHostKeyChecking={policy}",
                     remote, install_cmd])
-        return runner.run_capture(cmd, input=pub_key.encode())
+        return runner.run_capture(cmd, input=stdin)
 
     @staticmethod
     def deploy(runner: Runner, user: str, host: str, pub_path: Path,
-               port: int = SSH_PORT) -> bool:
-        """Deploy the public key to the remote host in a single SSH session."""
+               port: int = SSH_PORT,
+               target_os: TargetOS = TargetOS.LINUX) -> TargetOS | None:
+        """Deploy public key in a single SSH session.
+
+        Return target OS the key landed on, None on failure. Differs
+        from the one passed in when fallback detection kicked in.
+        """
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
         shown = remote if port == SSH_PORT else f"{remote}:{port}"
         cli.status(f"Deploying key to {shown} ...")
 
-        install_cmd = (
-            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-            "key=$(cat) && "
-            "if ! grep -qF \"$key\" ~/.ssh/authorized_keys 2>/dev/null; then "
-            "printf '%s\\n' \"$key\" >> ~/.ssh/authorized_keys; fi && "
-            "chmod 600 ~/.ssh/authorized_keys"
-        )
-
-        rc, stderr = Deployer._ssh_cmd(runner, remote, install_cmd, pub_key,
+        install_cmd, stdin = Deployer._install_command(target_os, user,
+                                                       pub_key)
+        rc, stderr = Deployer._ssh_cmd(runner, remote, install_cmd, stdin,
                                        port=port)
 
         if rc != 0 and Deployer._is_host_key_changed(stderr):
@@ -644,34 +740,40 @@ class Deployer:
                 if not line.startswith("debug1:"):
                     cli.ssh_warning(line)
             cli.msg()
-            if cli.ask_yn("Remove old host key and retry?"):
-                cli.status(f"Removing old host key for {host} ...")
-                # Non-default ports are keyed as [host]:port in known_hosts
-                known = host if port == SSH_PORT else f"[{host}]:{port}"
-                runner.run(["ssh-keygen", "-R", known])
-                rc, stderr = Deployer._ssh_cmd(
-                    runner, remote, install_cmd, pub_key, accept_new=True,
-                    port=port)
-                if rc != 0:
-                    Deployer._report_failure(stderr)
-                    return False
-            else:
+            if not cli.ask_yn("Remove old host key and retry?"):
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
-                return False
+                return None
+            cli.status(f"Removing old host key for {host} ...")
+            # Non-default ports are keyed as [host]:port in known_hosts
+            known = host if port == SSH_PORT else f"[{host}]:{port}"
+            runner.run(["ssh-keygen", "-R", known])
+            rc, stderr = Deployer._ssh_cmd(
+                runner, remote, install_cmd, stdin, accept_new=True,
+                port=port)
         elif rc != 0 and Deployer._is_unknown_host(stderr):
             if not Deployer._handle_unknown_host(host, stderr):
-                return False
+                return None
             rc, stderr = Deployer._ssh_cmd(
-                runner, remote, install_cmd, pub_key, accept_new=True,
+                runner, remote, install_cmd, stdin, accept_new=True,
                 port=port)
-            if rc != 0:
-                Deployer._report_failure(stderr)
-                return False
-        elif rc != 0:
-            Deployer._report_failure(stderr)
-            return False
 
-        return True
+        # Banner read missed or skipped, ssh -v still names the remote
+        if (rc != 0 and target_os is TargetOS.LINUX
+                and Deployer._is_authenticated(stderr)):
+            detected = os_from_ssh_verbose(stderr)
+            if detected is not target_os:
+                cli.hint(f"{detected.label} detected, retrying")
+                target_os = detected
+                install_cmd, stdin = Deployer._install_command(
+                    target_os, user, pub_key)
+                rc, stderr = Deployer._ssh_cmd(
+                    runner, remote, install_cmd, stdin, accept_new=True,
+                    port=port)
+
+        if not Deployer._succeeded(rc, stderr, target_os):
+            Deployer._report_failure(stderr, target_os)
+            return None
+        return target_os
 
 
 def sanitize_alias(name: str, quiet: bool = False) -> str:
@@ -720,22 +822,38 @@ def split_host_port(host: str) -> tuple[str, int | None]:
     return host, int(port_text)
 
 
-def probe_port(host: str, port: int) -> tuple[str, str] | None:
-    """Try a TCP connect, return (reason, detail) on failure."""
+def read_banner(sock: socket.socket) -> str:
+    """Read server identification line, empty if none arrives in time."""
+    sock.settimeout(BANNER_TIMEOUT)
     try:
-        with socket.create_connection((host, port), CONNECT_TIMEOUT):
-            return None
+        data = sock.recv(256)
+    except OSError:
+        return ""
+    for line in data.decode(errors="replace").splitlines():
+        if line.startswith("SSH-"):
+            return line.strip()
+    return ""
+
+
+def probe_port(host: str, port: int) -> tuple[str, tuple[str, str] | None]:
+    """Try a TCP connect and read the SSH banner.
+
+    Return (banner, None) on success, ("", (reason, detail)) on failure.
+    """
+    try:
+        with socket.create_connection((host, port), CONNECT_TIMEOUT) as sock:
+            return read_banner(sock), None
     except socket.gaierror:
-        return (f"Could not resolve hostname '{host}'.",
-                "Check spelling or use an IP address instead.")
+        return "", (f"Could not resolve hostname '{host}'.",
+                    "Check spelling or use an IP address instead.")
     except ConnectionRefusedError:
-        return (f"Connection refused by {host} on port {port}.",
-                "Host is up but no SSH server is listening.")
+        return "", (f"Connection refused by {host} on port {port}.",
+                    "Host is up but no SSH server is listening.")
     except socket.timeout:
-        return (f"No response from {host} on port {port}.",
-                "Device may be off or on a different network.")
+        return "", (f"No response from {host} on port {port}.",
+                    "Device may be off or on a different network.")
     except OSError as ex:
-        return f"Cannot reach {host}.", str(ex)
+        return "", (f"Cannot reach {host}.", str(ex))
 
 
 def resolve_ssh_target(
@@ -780,13 +898,16 @@ def resolve_host(
     return rhost, rport
 
 
-def check_reachable(host: str, port: int = SSH_PORT) -> None:
-    """Probe SSH port. On failure explain why and offer to continue."""
+def check_reachable(host: str, port: int = SSH_PORT) -> str:
+    """Probe SSH port and return its banner.
+
+    On failure explain why and offer to continue, banner is then empty.
+    """
     cli.status("Checking connection ... ", end="")
-    failure = probe_port(host, port)
+    banner, failure = probe_port(host, port)
     if failure is None:
         cli.ok()
-        return
+        return banner
 
     cli.failed()
     cli.warn(failure[0])
@@ -795,6 +916,7 @@ def check_reachable(host: str, port: int = SSH_PORT) -> None:
     if not cli.ask_yn("Continue anyway?"):
         cli.cancel()
         sys.exit(0)
+    return ""
 
 
 _DESCRIPTION = (
@@ -808,6 +930,7 @@ _EXAMPLES = [
     ("ssh-keyup pi@192.168.1.23 mypi", "user, host and alias"),
     ("ssh-keyup trinity@rpi-5.local", "alias defaults to rpi-5"),
     ("ssh-keyup pi@192.168.1.23:2222 mypi", "non-default SSH port"),
+    ("ssh-keyup admin@192.168.88.1 router", "RouterOS, detected"),
     ("ssh-keyup 192.168.1.23", "prompts for username and alias"),
     ("ssh-keyup --host rpi-5 --user pi --alias mypi", "flags work too"),
     ("ssh-keyup --list", "show managed entries"),
@@ -843,6 +966,8 @@ def parse_args() -> argparse.Namespace:
                    help="friendly name for ~/.ssh/config (default: hostname)")
     p.add_argument("--port", type=int, metavar="PORT",
                    help="SSH port of the remote device (default: 22)")
+    p.add_argument("--os", choices=[o.value for o in TargetOS],
+                   help="target OS, detected from SSH banner by default")
     p.add_argument("--list", action="store_true",
                    help="list entries managed by ssh-keyup")
     p.add_argument("--remove", metavar="ALIAS",
@@ -852,8 +977,8 @@ def parse_args() -> argparse.Namespace:
     if args.list and args.remove:
         p.error("--list and --remove cannot be combined")
     if ((args.list or args.remove)
-            and any((args.target, args.alias_pos,
-                     args.host, args.user, args.alias, args.port))):
+            and any((args.target, args.alias_pos, args.host, args.user,
+                     args.alias, args.port, args.os))):
         p.error("--list/--remove cannot be combined with setup arguments")
     if args.port is not None and not 1 <= args.port <= MAX_PORT:
         p.error(f"invalid port {args.port}")
@@ -877,8 +1002,8 @@ def parse_args() -> argparse.Namespace:
 
 def gather_input(
     args: argparse.Namespace, runner: Runner,
-) -> tuple[str, str, str, int]:
-    """Collect host, username, alias and port from args or prompts."""
+) -> tuple[str, str, str, int, TargetOS]:
+    """Collect host, user, alias, port and target OS from args or prompts."""
     typed = cli.prompt("Remote host", args.host, hint="IP or name")
     if not typed:
         cli.fatal("No host provided.")
@@ -890,7 +1015,13 @@ def gather_input(
         cli.fatal("Port given both in host and as --port.")
 
     host, port = resolve_host(runner, typed, typed_port or args.port)
-    check_reachable(host, port)
+    banner = check_reachable(host, port)
+    if args.os:
+        target_os = TargetOS(args.os)
+    else:
+        target_os = os_from_banner(banner)
+        if target_os is not TargetOS.LINUX:
+            cli.hint(f"{target_os.label} detected")
 
     user = cli.prompt("Username", args.user)
     if not user:
@@ -908,7 +1039,7 @@ def gather_input(
 
     alias = sanitize_alias(alias)
 
-    return host, user, alias, port
+    return host, user, alias, port, target_os
 
 
 def generate_key(runner: Runner, key_path: Path) -> None:
@@ -953,7 +1084,7 @@ def main() -> None:
         runner = Runner()
         runner.check()
 
-        host, user, alias, port = gather_input(args, runner)
+        host, user, alias, port, target_os = gather_input(args, runner)
         file_alias = alias.replace("-", "_")
 
         cli.separator()
@@ -991,13 +1122,14 @@ def main() -> None:
                     if key_generated:
                         discard_keys(key_path, pub_path)
                     cli.fatal(f"SSH config update failed: {ex}")
-            deployed = Deployer.deploy(runner, user, host, pub_path, port)
+            deployed = Deployer.deploy(runner, user, host, pub_path, port,
+                                       target_os)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()
                 discard_keys(key_path, pub_path)
             raise
-        if not deployed:
+        if deployed is None:
             if key_generated:
                 discard_keys(key_path, pub_path)
             sys.exit(1)
@@ -1010,7 +1142,11 @@ def main() -> None:
         cli.msg(f"Config updated {ssh_config}")
 
         cli.separator()
-        cli.success(f"SSH key deployed for '{alias}'.\n")
+        cli.success(f"SSH key deployed for '{alias}'.")
+        if deployed is TargetOS.ROUTEROS:
+            cli.hint(f"By default RouterOS turns off password SSH login for "
+                     f"{user} once a key exists (WinBox, WebFig unaffected).")
+        cli.msg()
     except KeyboardInterrupt:
         sys.stdout.write(CLI.SHOW_CUR)
         sys.stdout.flush()

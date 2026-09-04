@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for ssh_keyup argument handling and helpers."""
 
-import contextlib
 import socket
 import sys
 
@@ -238,20 +237,29 @@ class TestManageArgs:
 
 
 class FakeRunner:
-    """Stand-in for Runner, returns canned output and records commands."""
+    """Stand-in for Runner, returns canned output and records commands.
 
-    def __init__(self, rc=0, out=""):
-        self.rc = rc
-        self.out = out
+    Pass `results` as a list of (rc, out) to answer successive calls
+    differently, the last entry repeats.
+    """
+
+    def __init__(self, rc=0, out="", results=None):
+        self.results = list(results) if results else [(rc, out)]
         self.cmds = []
+        self.inputs = []
+
+    def _next(self, cmd, kwargs):
+        self.cmds.append(cmd)
+        self.inputs.append(kwargs.get("input"))
+        if len(self.results) > 1:
+            return self.results.pop(0)
+        return self.results[0]
 
     def run_stdout(self, cmd, **kwargs):
-        self.cmds.append(cmd)
-        return self.rc, self.out
+        return self._next(cmd, kwargs)
 
     def run_capture(self, cmd, **kwargs):
-        self.cmds.append(cmd)
-        return self.rc, self.out
+        return self._next(cmd, kwargs)
 
 
 SSH_G_OUTPUT = """\
@@ -328,7 +336,7 @@ class TestResolveHost:
 
 class TestGatherInput:
     @staticmethod
-    def _gather(monkeypatch, argv):
+    def _gather(monkeypatch, argv, banner=""):
         seen = {}
 
         def fake_resolve(runner, host, port=None):
@@ -336,26 +344,43 @@ class TestGatherInput:
             return host, port or 22
 
         monkeypatch.setattr(ssh_keyup, "resolve_host", fake_resolve)
-        monkeypatch.setattr(ssh_keyup, "check_reachable", lambda h, p: None)
+        monkeypatch.setattr(ssh_keyup, "check_reachable", lambda h, p: banner)
         monkeypatch.setattr("builtins.input", lambda *_: "")
         result = ssh_keyup.gather_input(parse(argv), FakeRunner())
         return result, seen
 
     def test_port_from_host(self, monkeypatch):
-        (host, _, _, port), seen = self._gather(
+        (host, _, _, port, _), seen = self._gather(
             monkeypatch, ["pi@10.0.0.5:2222", "mypi"])
         assert (host, port) == ("10.0.0.5", 2222)
         assert seen == {"host": "10.0.0.5", "port": 2222}
 
     def test_port_from_flag(self, monkeypatch):
-        (host, _, _, port), _ = self._gather(
+        (host, _, _, port, _), _ = self._gather(
             monkeypatch, ["pi@10.0.0.5", "mypi", "--port", "2222"])
         assert (host, port) == ("10.0.0.5", 2222)
 
     def test_same_port_both_ways(self, monkeypatch):
-        (_, _, _, port), _ = self._gather(
+        (_, _, _, port, _), _ = self._gather(
             monkeypatch, ["pi@10.0.0.5:2222", "mypi", "--port", "2222"])
         assert port == 2222
+
+    def test_linux_by_default(self, monkeypatch, capsys):
+        (*_, target_os), _ = self._gather(monkeypatch, ["pi@10.0.0.5", "mypi"])
+        assert target_os is ssh_keyup.TargetOS.LINUX
+        assert "detected" not in capsys.readouterr().out
+
+    def test_detects_routeros_from_banner(self, monkeypatch, capsys):
+        (*_, target_os), _ = self._gather(
+            monkeypatch, ["admin@10.0.0.1", "router"], banner="SSH-2.0-ROSSSH")
+        assert target_os is ssh_keyup.TargetOS.ROUTEROS
+        assert "RouterOS detected" in capsys.readouterr().out
+
+    def test_os_flag_overrides_detection(self, monkeypatch, capsys):
+        (*_, target_os), _ = self._gather(
+            monkeypatch, ["admin@10.0.0.1", "router", "--os", "routeros"])
+        assert target_os is ssh_keyup.TargetOS.ROUTEROS
+        assert "detected" not in capsys.readouterr().out
 
     def test_conflicting_ports_exit(self, monkeypatch, capsys):
         with pytest.raises(SystemExit):
@@ -369,7 +394,7 @@ class TestGatherInput:
         assert "Invalid port" in capsys.readouterr().out
 
     def test_alias_default_ignores_port(self, monkeypatch):
-        (_, _, alias, _), _ = self._gather(
+        (_, _, alias, _, _), _ = self._gather(
             monkeypatch, ["pi@rpi-5.local:2222"])
         assert alias == "rpi-5"
 
@@ -390,12 +415,12 @@ class TestBuildBlock:
 class TestSSHCommand:
     def test_omits_port_flag_on_default(self):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key")
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key")
         assert "-p" not in runner.cmds[0]
 
     def test_passes_port_flag_when_custom(self):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key",
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key",
                                     port=2222)
         cmd = runner.cmds[0]
         assert cmd[cmd.index("-p") + 1] == "2222"
@@ -403,9 +428,107 @@ class TestSSHCommand:
     @pytest.mark.parametrize("accept_new", [False, True])
     def test_always_verbose(self, accept_new):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", "key",
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key",
                                     accept_new=accept_new)
         assert "-v" in runner.cmds[0]
+
+    def test_feeds_stdin(self):
+        runner = FakeRunner()
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key")
+        assert runner.inputs == [b"key"]
+
+
+class TestTargetOS:
+    @pytest.mark.parametrize("banner, expected", [
+        ("SSH-2.0-OpenSSH_9.2p1 Debian-2", ssh_keyup.TargetOS.LINUX),
+        ("SSH-2.0-ROSSSH", ssh_keyup.TargetOS.ROUTEROS),
+        ("", ssh_keyup.TargetOS.LINUX),
+    ])
+    def test_from_banner(self, banner, expected):
+        assert ssh_keyup.os_from_banner(banner) is expected
+
+    def test_from_ssh_verbose(self):
+        stderr = ("debug1: Remote protocol version 2.0, "
+                  "remote software version ROSSSH\n")
+        assert ssh_keyup.os_from_ssh_verbose(stderr) is \
+            ssh_keyup.TargetOS.ROUTEROS
+        assert ssh_keyup.os_from_ssh_verbose("no such line") is \
+            ssh_keyup.TargetOS.LINUX
+
+    def test_os_flag_choices(self):
+        assert parse(["rpi-5", "--os", "routeros"]).os == "routeros"
+        with pytest.raises(SystemExit):
+            parse(["rpi-5", "--os", "plan9"])
+
+
+class FakeSocket:
+    def __init__(self, data):
+        self.data = data
+
+    def settimeout(self, value):
+        pass
+
+    def recv(self, size):
+        if isinstance(self.data, Exception):
+            raise self.data
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestReadBanner:
+    def test_returns_identification_line(self):
+        sock = FakeSocket(b"SSH-2.0-ROSSSH\r\n")
+        assert ssh_keyup.read_banner(sock) == "SSH-2.0-ROSSSH"
+
+    def test_skips_pre_banner_text(self):
+        sock = FakeSocket(b"Welcome\r\nSSH-2.0-OpenSSH_9.2\r\n")
+        assert ssh_keyup.read_banner(sock) == "SSH-2.0-OpenSSH_9.2"
+
+    def test_empty_on_timeout(self):
+        assert ssh_keyup.read_banner(FakeSocket(socket.timeout())) == ""
+
+
+# Throwaway key, fingerprint cross-checked with ssh-keygen -lf
+VECTOR_KEY = ("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJGRmHknhcaBKNcm1wTSutdIQUJ"
+              "NztxgJe9W1Vaol8is vector")
+VECTOR_FP = "SHA256:Qtfuel0sROISC4b/uk7Epfr9SjZTn3/YBh3CqKy6UcY="
+
+
+class TestInstallCommand:
+    def test_linux_takes_key_on_stdin(self):
+        cmd, stdin = ssh_keyup.Deployer._install_command(
+            ssh_keyup.TargetOS.LINUX, "pi", "ssh-ed25519 AAAA c")
+        assert "authorized_keys" in cmd
+        assert "AAAA" not in cmd
+        assert stdin == b"ssh-ed25519 AAAA c"
+
+    def test_routeros_takes_key_inline(self):
+        cmd, stdin = ssh_keyup.Deployer._install_command(
+            ssh_keyup.TargetOS.ROUTEROS, "admin", VECTOR_KEY)
+        assert f'/user/ssh-keys/add user="admin" key="{VECTOR_KEY}"' in cmd
+        assert stdin == b""
+
+    def test_routeros_add_is_guarded_by_fingerprint_lookup(self):
+        cmd, _ = ssh_keyup.Deployer._install_command(
+            ssh_keyup.TargetOS.ROUTEROS, "admin", VECTOR_KEY)
+        assert cmd.startswith(":local n 0; :do {")
+        assert f'user="admin" and fingerprint="{VECTOR_FP}"' in cmd
+        # The add must sit outside on-error, or its message gets swallowed
+        assert cmd.index("on-error={}") < cmd.index("/user/ssh-keys/add")
+
+
+class TestKeyFingerprint:
+    def test_matches_ssh_keygen_with_padding(self):
+        assert ssh_keyup.key_fingerprint(VECTOR_KEY) == VECTOR_FP
+
+    @pytest.mark.parametrize("line", ["", "ssh-ed25519", "ssh-ed25519 !!! c"])
+    def test_empty_for_malformed_line(self, line):
+        assert ssh_keyup.key_fingerprint(line) == ""
 
 
 # Verbose stderr after a successful login and a failing remote command
@@ -419,6 +542,31 @@ Transferred: sent 2204, received 2776 bytes, in 0.1 seconds
 Bytes per second: sent 31485.7, received 39657.2
 debug1: Exit status 1
 """
+
+# Same, with the banner echo that identifies RouterOS
+ROUTEROS_STDERR = AUTH_OK_STDERR.replace(
+    "Authenticated to",
+    "debug1: Remote protocol version 2.0, remote software version ROSSSH\n"
+    "Authenticated to")
+
+# Verbose output of a clean run, nothing from the remote command
+CLEAN_STDERR = """\
+OpenSSH_9.5p2, LibreSSL 3.8.2
+debug1: Connecting to router [10.0.0.1] port 22.
+debug1: Remote protocol version 2.0, remote software version ROSSSH
+Warning: Permanently added '10.0.0.1' (ED25519) to the list of known hosts.
+Authenticated to router ([10.0.0.1]:22) using "password".
+
+Transferred: sent 2204, received 2776 bytes, in 0.1 seconds
+Bytes per second: sent 31485.7, received 39657.2
+debug1: Exit status 0
+"""
+
+# RouterOS rejecting a key, exit status stays 0
+ROUTEROS_REJECT = CLEAN_STDERR.replace(
+    "Transferred:",
+    "failure: unable to load key file (wrong format or bad passphrase)! "
+    "(/user/ssh-keys/add; line 1)\nTransferred:")
 
 # Verbose stderr after a rejected password
 AUTH_FAIL_STDERR = """\
@@ -458,30 +606,137 @@ class TestReportFailure:
         ]
 
     def test_remote_failure_is_not_a_login_failure(self, capsys):
-        ssh_keyup.Deployer._report_failure(AUTH_OK_STDERR)
+        ssh_keyup.Deployer._report_failure(AUTH_OK_STDERR,
+                                           ssh_keyup.TargetOS.LINUX)
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "bad command name mkdir" in out
         assert "credentials" not in out
+        assert "7.12" not in out
 
     def test_login_failure_names_credentials(self, capsys):
-        ssh_keyup.Deployer._report_failure(AUTH_FAIL_STDERR)
+        ssh_keyup.Deployer._report_failure(AUTH_FAIL_STDERR,
+                                           ssh_keyup.TargetOS.LINUX)
         out = capsys.readouterr().out
         assert "Check host and credentials" in out
         assert "Permission denied (publickey,password)" in out
         assert "OpenSSH_" not in out
 
+    def test_error_lines_drop_blank_lines(self):
+        assert ssh_keyup.Deployer._error_lines(CLEAN_STDERR) == []
+
+    def test_routeros_rejected_key_hints_version(self, capsys):
+        ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
+                                           ssh_keyup.TargetOS.ROUTEROS)
+        out = capsys.readouterr().out
+        assert "install command failed" in out
+        assert "unable to load key file" in out
+        assert "7.12" in out
+
+    def test_routeros_permission_error_hints_policy(self, capsys):
+        stderr = CLEAN_STDERR.replace(
+            "Transferred:",
+            "not enough permissions (9) (/user/ssh-keys/add; line 1)\n"
+            "Transferred:")
+        ssh_keyup.Deployer._report_failure(stderr,
+                                           ssh_keyup.TargetOS.ROUTEROS)
+        out = capsys.readouterr().out
+        assert "policy permission" in out
+        assert "7.12" not in out
+
+    @pytest.mark.parametrize("stderr", [AUTH_FAIL_STDERR, ROUTEROS_STDERR])
+    def test_routeros_other_failures_have_no_hint(self, capsys, stderr):
+        ssh_keyup.Deployer._report_failure(stderr,
+                                           ssh_keyup.TargetOS.ROUTEROS)
+        out = capsys.readouterr().out
+        assert "7.12" not in out
+        assert "policy" not in out
+
+    def test_linux_gets_no_routeros_hints(self, capsys):
+        ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
+                                           ssh_keyup.TargetOS.LINUX)
+        assert "7.12" not in capsys.readouterr().out
+
+
+class TestSucceeded:
+    LINUX = ssh_keyup.TargetOS.LINUX
+    ROUTEROS = ssh_keyup.TargetOS.ROUTEROS
+
+    def test_nonzero_exit_fails_everywhere(self):
+        assert not ssh_keyup.Deployer._succeeded(1, CLEAN_STDERR, self.LINUX)
+        assert not ssh_keyup.Deployer._succeeded(1, CLEAN_STDERR,
+                                                 self.ROUTEROS)
+
+    def test_linux_ignores_remote_output(self):
+        assert ssh_keyup.Deployer._succeeded(0, AUTH_OK_STDERR, self.LINUX)
+
+    def test_routeros_clean_output_succeeds(self):
+        assert ssh_keyup.Deployer._succeeded(0, CLEAN_STDERR, self.ROUTEROS)
+
+    def test_routeros_any_remote_output_fails(self):
+        assert not ssh_keyup.Deployer._succeeded(0, ROUTEROS_REJECT,
+                                                 self.ROUTEROS)
+
 
 class TestDeploy:
-    def test_remote_failure_reported_after_login(self, tmp_path, capsys):
+    LINUX = ssh_keyup.TargetOS.LINUX
+    ROUTEROS = ssh_keyup.TargetOS.ROUTEROS
+
+    @staticmethod
+    def _pub(tmp_path):
         pub = tmp_path / "id_ed25519_r.pub"
         pub.write_text("ssh-ed25519 AAAA test\n")
+        return pub
+
+    def test_remote_failure_reported_after_login(self, tmp_path, capsys):
         runner = FakeRunner(rc=1, out=AUTH_OK_STDERR)
-        assert ssh_keyup.Deployer.deploy(runner, "admin", "router", pub) \
-            is False
+        assert ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path)) is None
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "credentials" not in out
+        assert len(runner.cmds) == 1
+
+    def test_returns_target_os_on_success(self, tmp_path):
+        runner = FakeRunner(rc=0, out=CLEAN_STDERR)
+        deployed = ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path),
+            target_os=self.ROUTEROS)
+        assert deployed is self.ROUTEROS
+        assert "/user/ssh-keys/add" in runner.cmds[0][-1]
+        assert runner.inputs == [b""]
+
+    def test_routeros_rejection_with_exit_zero_fails(self, tmp_path, capsys):
+        runner = FakeRunner(rc=0, out=ROUTEROS_REJECT)
+        assert ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path),
+            target_os=self.ROUTEROS) is None
+        out = capsys.readouterr().out
+        assert "install command failed" in out
+        assert "7.12" in out
+
+    def test_falls_back_to_routeros_after_linux_command_fails(
+            self, tmp_path, capsys):
+        runner = FakeRunner(results=[(1, ROUTEROS_STDERR), (0, CLEAN_STDERR)])
+        deployed = ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path))
+        assert deployed is self.ROUTEROS
+        assert "RouterOS detected" in capsys.readouterr().out
+        assert len(runner.cmds) == 2
+        assert "authorized_keys" in runner.cmds[0][-1]
+        assert "/user/ssh-keys/add" in runner.cmds[1][-1]
+
+    def test_no_fallback_without_login(self, tmp_path):
+        runner = FakeRunner(rc=1, out=AUTH_FAIL_STDERR)
+        assert ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path)) is None
+        assert len(runner.cmds) == 1
+
+    def test_no_fallback_when_os_was_given(self, tmp_path):
+        runner = FakeRunner(rc=1, out=ROUTEROS_STDERR)
+        assert ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path),
+            target_os=self.ROUTEROS) is None
         assert len(runner.cmds) == 1
 
 
@@ -503,10 +758,10 @@ class TestAtomicWrite:
 
 
 class TestProbePort:
-    def test_none_when_connectable(self, monkeypatch):
+    def test_banner_when_connectable(self, monkeypatch):
         monkeypatch.setattr(ssh_keyup.socket, "create_connection",
-                            lambda *a, **k: contextlib.nullcontext())
-        assert ssh_keyup.probe_port("rpi", 22) is None
+                            lambda *a, **k: FakeSocket(b"SSH-2.0-ROSSSH\r\n"))
+        assert ssh_keyup.probe_port("rpi", 22) == ("SSH-2.0-ROSSSH", None)
 
     @pytest.mark.parametrize("exc,fragment", [
         (socket.gaierror(), "Could not resolve hostname"),
@@ -518,26 +773,28 @@ class TestProbePort:
         def boom(*a, **k):
             raise exc
         monkeypatch.setattr(ssh_keyup.socket, "create_connection", boom)
-        result = ssh_keyup.probe_port("rpi", 22)
-        assert result is not None
-        assert fragment in result[0]
+        banner, failure = ssh_keyup.probe_port("rpi", 22)
+        assert banner == ""
+        assert failure is not None
+        assert fragment in failure[0]
 
 
 class TestCheckReachable:
-    def test_reports_ok_when_reachable(self, monkeypatch, capsys):
-        monkeypatch.setattr(ssh_keyup, "probe_port", lambda h, p: None)
-        ssh_keyup.check_reachable("rpi")
+    def test_reports_ok_and_returns_banner(self, monkeypatch, capsys):
+        monkeypatch.setattr(ssh_keyup, "probe_port",
+                            lambda h, p: ("SSH-2.0-OpenSSH_9.2", None))
+        assert ssh_keyup.check_reachable("rpi") == "SSH-2.0-OpenSSH_9.2"
         assert "ok" in capsys.readouterr().out
 
     def test_continues_when_user_accepts(self, monkeypatch):
         monkeypatch.setattr(ssh_keyup, "probe_port",
-                            lambda h, p: ("no route", "detail"))
+                            lambda h, p: ("", ("no route", "detail")))
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
-        ssh_keyup.check_reachable("rpi")
+        assert ssh_keyup.check_reachable("rpi") == ""
 
     def test_exits_when_user_declines(self, monkeypatch):
         monkeypatch.setattr(ssh_keyup, "probe_port",
-                            lambda h, p: ("no route", "detail"))
+                            lambda h, p: ("", ("no route", "detail")))
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
         with pytest.raises(SystemExit) as exc:
             ssh_keyup.check_reachable("rpi")

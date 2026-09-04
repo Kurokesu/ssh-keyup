@@ -33,6 +33,7 @@ else:
     import tty
 
 SSH_PORT = 22
+MAX_PORT = 65535
 CONNECT_TIMEOUT = 3.0
 
 
@@ -701,6 +702,24 @@ def split_target(target: str) -> tuple[str | None, str]:
     return None, target
 
 
+def split_host_port(host: str) -> tuple[str, int | None]:
+    """Split host[:port], IPv6 literals need brackets to carry a port."""
+    if host.startswith("["):
+        inner, sep, rest = host[1:].partition("]")
+        if not sep or (rest and not rest.startswith(":")):
+            raise ValueError(f"Invalid host '{host}'.")
+        if not rest:
+            return inner, None
+        host, port_text = inner, rest[1:]
+    elif host.count(":") == 1:
+        host, _, port_text = host.partition(":")
+    else:
+        return host, None
+    if not port_text.isdigit() or not 1 <= int(port_text) <= MAX_PORT:
+        raise ValueError(f"Invalid port '{port_text}'.")
+    return host, int(port_text)
+
+
 def probe_port(host: str, port: int) -> tuple[str, str] | None:
     """Try a TCP connect, return (reason, detail) on failure."""
     try:
@@ -719,30 +738,40 @@ def probe_port(host: str, port: int) -> tuple[str, str] | None:
         return f"Cannot reach {host}.", str(ex)
 
 
-def resolve_ssh_target(runner: Runner, host: str) -> tuple[str, int] | None:
-    """Resolve host through ssh config, return effective (hostname, port)."""
-    rc, out = runner.run_stdout(["ssh", "-G", host],
-                                stderr=subprocess.DEVNULL)
+def resolve_ssh_target(
+    runner: Runner, host: str, port: int | None = None,
+) -> tuple[str, int] | None:
+    """Resolve host through ssh config, return effective (hostname, port).
+
+    Explicit port goes to ssh as -p, so command line beats config the
+    same way it does for ssh itself.
+    """
+    cmd = ["ssh", "-G"]
+    if port:
+        cmd.extend(["-p", str(port)])
+    rc, out = runner.run_stdout(cmd + [host], stderr=subprocess.DEVNULL)
     if rc != 0:
         return None
-    hostname, port = None, None
+    hostname, found = None, None
     for line in out.splitlines():
         key, _, value = line.partition(" ")
         if key == "hostname":
             hostname = value.strip()
         elif key == "port":
             with contextlib.suppress(ValueError):
-                port = int(value)
+                found = int(value)
     if not hostname:
         return None
-    return hostname, port or SSH_PORT
+    return hostname, found or port or SSH_PORT
 
 
-def resolve_host(runner: Runner, host: str) -> tuple[str, int]:
+def resolve_host(
+    runner: Runner, host: str, port: int | None = None,
+) -> tuple[str, int]:
     """Resolve a typed host through ssh config to (hostname, port)."""
-    target = resolve_ssh_target(runner, host)
+    target = resolve_ssh_target(runner, host, port)
     if not target:
-        return host, SSH_PORT
+        return host, port or SSH_PORT
 
     rhost, rport = target
     if rhost.lower() != host.lower():
@@ -778,6 +807,7 @@ _EXAMPLES = [
     ("ssh-keyup", "interactive mode"),
     ("ssh-keyup pi@192.168.1.23 mypi", "user, host and alias"),
     ("ssh-keyup trinity@rpi-5.local", "alias defaults to rpi-5"),
+    ("ssh-keyup pi@192.168.1.23:2222 mypi", "non-default SSH port"),
     ("ssh-keyup 192.168.1.23", "prompts for username and alias"),
     ("ssh-keyup --host rpi-5 --user pi --alias mypi", "flags work too"),
     ("ssh-keyup --list", "show managed entries"),
@@ -811,6 +841,8 @@ def parse_args() -> argparse.Namespace:
                    help="login username on the remote device")
     p.add_argument("--alias",
                    help="friendly name for ~/.ssh/config (default: hostname)")
+    p.add_argument("--port", type=int, metavar="PORT",
+                   help="SSH port of the remote device (default: 22)")
     p.add_argument("--list", action="store_true",
                    help="list entries managed by ssh-keyup")
     p.add_argument("--remove", metavar="ALIAS",
@@ -821,8 +853,10 @@ def parse_args() -> argparse.Namespace:
         p.error("--list and --remove cannot be combined")
     if ((args.list or args.remove)
             and any((args.target, args.alias_pos,
-                     args.host, args.user, args.alias))):
+                     args.host, args.user, args.alias, args.port))):
         p.error("--list/--remove cannot be combined with setup arguments")
+    if args.port is not None and not 1 <= args.port <= MAX_PORT:
+        p.error(f"invalid port {args.port}")
 
     if args.target:
         user, host = split_target(args.target)
@@ -848,8 +882,14 @@ def gather_input(
     typed = cli.prompt("Remote host", args.host, hint="IP or name")
     if not typed:
         cli.fatal("No host provided.")
+    try:
+        typed, typed_port = split_host_port(typed)
+    except ValueError as ex:
+        cli.fatal(str(ex))
+    if typed_port and args.port and typed_port != args.port:
+        cli.fatal("Port given both in host and as --port.")
 
-    host, port = resolve_host(runner, typed)
+    host, port = resolve_host(runner, typed, typed_port or args.port)
     check_reachable(host, port)
 
     user = cli.prompt("Username", args.user)

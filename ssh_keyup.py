@@ -568,15 +568,45 @@ class Deployer:
             return False
         return True
 
+    # ssh -v chatter that is not an error and not remote output
+    _SSH_NOISE = ("debug1:", "OpenSSH_", "Authenticated to ",
+                  "Transferred: ", "Bytes per second: ",
+                  "Warning: Permanently added")
+
+    @staticmethod
+    def _is_authenticated(stderr: str) -> bool:
+        """Return True if verbose stderr shows login succeeded."""
+        return "Authenticated to " in stderr
+
+    @staticmethod
+    def _error_lines(stderr: str) -> list[str]:
+        """Keep ssh errors and remote output, drop -v chatter and repeats."""
+        seen: set[str] = set()
+        lines = []
+        for line in stderr.strip().splitlines():
+            if line.startswith(Deployer._SSH_NOISE) or line in seen:
+                continue
+            seen.add(line)
+            lines.append(line)
+        return lines
+
+    @staticmethod
+    def _report_failure(stderr: str) -> None:
+        """Explain failed deploy, a remote error is not a login error."""
+        if Deployer._is_authenticated(stderr):
+            cli.fail("\nLogged in, but install command failed on device.")
+        else:
+            cli.fail("\nSSH connection failed. Check host and credentials.")
+        for line in Deployer._error_lines(stderr):
+            cli.ssh_info(line)
+
     @staticmethod
     def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
                  pub_key: str, accept_new: bool = False,
                  port: int = SSH_PORT) -> tuple[int, str]:
-        """Run the SSH deploy command."""
+        """Run SSH deploy command, verbose so failures can be explained."""
         policy = "accept-new" if accept_new else "yes"
-        cmd = ["ssh"]
-        if not accept_new:
-            cmd.append("-v")
+        cmd = ["ssh", "-v"]
         if port != SSH_PORT:
             cmd.extend(["-p", str(port)])
         cmd.extend(["-o", f"StrictHostKeyChecking={policy}",
@@ -617,9 +647,7 @@ class Deployer:
                     runner, remote, install_cmd, pub_key, accept_new=True,
                     port=port)
                 if rc != 0:
-                    cli.fail(
-                        "\nStill can't connect. Check host and credentials."
-                    )
+                    Deployer._report_failure(stderr)
                     return False
             else:
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
@@ -631,20 +659,10 @@ class Deployer:
                 runner, remote, install_cmd, pub_key, accept_new=True,
                 port=port)
             if rc != 0:
-                cli.fail(
-                    "\nSSH connection failed. Check host and credentials."
-                )
+                Deployer._report_failure(stderr)
                 return False
         elif rc != 0:
-            cli.fail(
-                "\nSSH connection failed. Check host and credentials."
-            )
-            if stderr.strip():
-                seen: set[str] = set()
-                for line in stderr.strip().splitlines():
-                    if line not in seen and not line.startswith("debug1:"):
-                        seen.add(line)
-                        cli.ssh_info(line)
+            Deployer._report_failure(stderr)
             return False
 
         return True

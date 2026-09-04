@@ -323,11 +323,16 @@ class Runner:
     def run_capture(
         self, cmd: list[str] | str, **kwargs,
     ) -> tuple[int, str]:
-        """Run a command, capture stderr, return (rc, text)."""
+        """Run command, capture both streams, return (rc, text).
+
+        stderr comes first, then stdout. Devices differ in which stream
+        their console errors use, RouterOS writes them to stdout.
+        """
         args, shell = self._subprocess_args(cmd)
         r = subprocess.run(args, shell=shell, check=False,
-                           stderr=subprocess.PIPE, **kwargs)
-        return r.returncode, (r.stderr or b"").decode(errors="replace")
+                           capture_output=True, **kwargs)
+        text = (r.stderr or b"") + (r.stdout or b"")
+        return r.returncode, text.decode(errors="replace")
 
     def run_stdout(
         self, cmd: list[str] | str, **kwargs,

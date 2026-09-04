@@ -332,6 +332,17 @@ pi@10.0.0.5: Permission denied (publickey,password).
 """
 
 
+class TestRunCapture:
+    def test_merges_stderr_then_stdout(self):
+        runner = ssh_keyup.Runner()
+        runner.mode = "native"
+        script = ("import sys; print('from stdout'); "
+                  "print('from stderr', file=sys.stderr); sys.exit(3)")
+        rc, text = runner.run_capture([sys.executable, "-c", script])
+        assert rc == 3
+        assert text.splitlines() == ["from stderr", "from stdout"]
+
+
 class TestReportFailure:
     def test_detects_login(self):
         assert ssh_keyup.Deployer._is_authenticated(AUTH_OK_STDERR)

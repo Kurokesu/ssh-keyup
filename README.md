@@ -53,10 +53,11 @@ ssh mypi   # no password, ever again
 ### Skip prompts
 
 ```bash
-ssh-keyup pi@192.168.1.23 mypi   # user, host and alias in one go
+ssh-keyup pi@192.168.1.23 mypi        # user, host and alias in one go
+ssh-keyup pi@192.168.1.23:2222 mypi   # non-default SSH port
 ```
 
-Flags (`--host`, `--user`, `--alias`) work too, see `ssh-keyup --help`.
+Flags (`--host`, `--user`, `--alias`, `--port`) work too, see `ssh-keyup --help`
 
 ### Set up a fleet
 

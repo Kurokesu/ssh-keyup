@@ -26,6 +26,9 @@ def test_detects_routeros_from_banner(session):
 
 
 def test_second_alias_adds_second_key(session):
+    if session.target.name == "ros7":
+        pytest.skip("RouterOS drops password login once a key exists")
+
     for alias in ("alpha", "beta"):
         run = session.keyup(session.address, alias)
         assert run.returncode == 0, run.stdout + run.stderr
@@ -36,6 +39,9 @@ def test_second_alias_adds_second_key(session):
 
 
 def test_bad_password_leaves_nothing_behind(session):
+    if session.target.name == "ros7":
+        pytest.skip("CHR admin has no password, so any password is taken")
+
     run = session.with_password("not-the-password").keyup(
         session.address, "gamma")
     assert run.returncode == 1

@@ -1,0 +1,41 @@
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  target:
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [linux, ros7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # RouterOS runs in QEMU and needs KVM to boot within the timeout
+      - name: Grant KVM access
+        if: matrix.service == 'ros7'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start target
+        run: docker compose -f integration/compose.yml up -d ${{ matrix.service }}
+      - name: Install pytest
+        run: pip install pytest
+      # -ra so a skipped target and its reason show up in the log
+      - name: Run integration tests
+        run: pytest integration -m integration -k ${{ matrix.service }} -v -ra
+      - name: Target logs
+        if: failure()
+        run: docker compose -f integration/compose.yml logs ${{ matrix.service }}

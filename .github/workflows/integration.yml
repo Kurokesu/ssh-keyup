@@ -33,9 +33,11 @@ jobs:
         run: docker compose -f integration/compose.yml up -d ${{ matrix.service }}
       - name: Install pytest
         run: pip install pytest
-      # -ra so a skipped target and its reason show up in the log
+      # Strict so a target that never booted fails instead of skipping green
       - name: Run integration tests
+        env:
+          INTEGRATION_STRICT: "1"
         run: pytest integration -m integration -k ${{ matrix.service }} -v -ra
       - name: Target logs
-        if: failure()
+        if: always()
         run: docker compose -f integration/compose.yml logs ${{ matrix.service }}

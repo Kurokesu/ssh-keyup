@@ -21,6 +21,7 @@ BOOT_TIMEOUT = 180.0
 REFUSE_GRACE = 10.0
 RUN_TIMEOUT = 120
 ASKPASS = "#!/bin/sh\nprintf '%s\\n' {}\n"
+STRICT = os.environ.get("INTEGRATION_STRICT") == "1"
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,17 @@ def _known_host(port: int) -> str:
     return HOST if port == 22 else f"[{HOST}]:{port}"
 
 
+def _unavailable(reason: str) -> None:
+    """Skip locally, fail in CI, where the target is meant to be running.
+
+    A skipped test still passes, so without this a target that never
+    booted reports a green check having asserted nothing.
+    """
+    if STRICT:
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="session")
 def trusted() -> set:
     """Trust reachable target host keys, then take the entries back out.
@@ -201,9 +213,9 @@ def session(request, tmp_path, trusted):
     if os.name != "posix":
         pytest.skip("password automation needs a POSIX askpass script")
     if not _banner(target):
-        pytest.skip(f"no SSH banner on {HOST}:{target.port}")
+        _unavailable(f"no SSH banner on {HOST}:{target.port}")
     if target.name not in trusted:
-        pytest.skip(f"no host key collected from {HOST}:{target.port}")
+        _unavailable(f"no host key collected from {HOST}:{target.port}")
 
     ssh_dir = tmp_path / "home" / ".ssh"
     ssh_dir.mkdir(parents=True)

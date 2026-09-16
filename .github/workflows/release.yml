@@ -19,6 +19,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      # Version is published under the name in the file
+      - name: Check tag matches __version__
+        run: |
+          version=$(python -c 'import ssh_keyup; print(ssh_keyup.__version__)')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match __version__ $version"
+            exit 1
+          fi
       - name: Build sdist and wheel
         run: |
           python -m pip install build

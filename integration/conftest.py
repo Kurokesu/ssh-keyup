@@ -20,6 +20,7 @@ HOST = os.environ.get("INTEGRATION_HOST", "127.0.0.1")
 BOOT_TIMEOUT = 180.0
 REFUSE_GRACE = 10.0
 RUN_TIMEOUT = 120
+SCAN_TRIES = 5
 ASKPASS = "#!/bin/sh\nprintf '%s\\n' {}\n"
 STRICT = os.environ.get("INTEGRATION_STRICT") == "1"
 
@@ -167,6 +168,18 @@ def _known_host(port: int) -> str:
     return HOST if port == 22 else f"[{HOST}]:{port}"
 
 
+def _scan_host_key(port: int) -> str:
+    """Collect a host key. CHR answers the banner before it answers a scan."""
+    for _ in range(SCAN_TRIES):
+        scan = subprocess.run(
+            ["ssh-keyscan", "-p", str(port), HOST],
+            check=False, capture_output=True, text=True, timeout=60)
+        if scan.stdout.strip():
+            return scan.stdout
+        time.sleep(2)
+    return ""
+
+
 def _unavailable(reason: str) -> None:
     """Skip locally, fail in CI, where the target is meant to be running.
 
@@ -192,13 +205,11 @@ def trusted() -> set:
     for target in TARGETS:
         if not _banner(target):
             continue
-        scan = subprocess.run(
-            ["ssh-keyscan", "-p", str(target.port), HOST],
-            check=False, capture_output=True, text=True, timeout=60)
-        if not scan.stdout.strip():
+        host_key = _scan_host_key(target.port)
+        if not host_key:
             continue
         with known.open("a") as fh:
-            fh.write(scan.stdout)
+            fh.write(host_key)
         names.add(target.name)
         added.append(_known_host(target.port))
     yield names

@@ -7,3 +7,8 @@ build-backend = "setuptools.build_meta"
 line-length = 79
 # match python_requires, keeps fixes runtime safe on old Pythons
 target-version = "py38"
+
+[tool.pytest.ini_options]
+# plain pytest runs unit tests only
+addopts = "-m 'not integration'"
+markers = ["integration: drives a live SSH target"]

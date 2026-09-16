@@ -1,0 +1,19 @@
+# Live SSH targets for the integration suite
+
+services:
+  linux:
+    build:
+      context: .
+      dockerfile: linux.Dockerfile
+    ports:
+      - "2200:22"
+
+  ros7:
+    image: evilfreelancer/docker-routeros:7.21.5
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+      - /dev/kvm
+    ports:
+      - "2207:22"

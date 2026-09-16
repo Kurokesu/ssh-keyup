@@ -19,8 +19,12 @@ services:
     ports:
       - "2207:22"
     networks:
-      - default
-      - routeros
+      # Published port forwards to the default address, so it has to be eth0.
+      # Priority pins that, otherwise attach order decides which one survives.
+      default:
+        priority: 100
+      routeros:
+        priority: 0
 
 networks:
   routeros:

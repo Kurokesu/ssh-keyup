@@ -19,12 +19,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      # Version is published under the name in the file
-      - name: Check tag matches __version__
+      # Version is published under the name in the file, and PyPI keeps it
+      # forever, so a dev tag must not reach the publish step
+      - name: Check tag matches release version
         run: |
           version=$(python -c 'import ssh_keyup; print(ssh_keyup.__version__)')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match __version__ $version"
+            exit 1
+          fi
+          if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$'; then
+            echo "refusing to publish pre-release version $version"
             exit 1
           fi
       - name: Build sdist and wheel

@@ -8,6 +8,7 @@ services:
     ports:
       - "2200:22"
 
+  # One network and the entrypoint bridges eth0, breaking host port mapping
   ros7:
     image: evilfreelancer/docker-routeros:7.21.5
     cap_add:
@@ -17,3 +18,10 @@ services:
       - /dev/kvm
     ports:
       - "2207:22"
+    networks:
+      - default
+      - routeros
+
+networks:
+  routeros:
+    driver: bridge

@@ -38,6 +38,16 @@ def test_second_alias_adds_second_key(session):
         assert login.returncode == 0, login.stderr
 
 
+def test_rsa_key_grants_login(session):
+    run = session.keyup(session.address, "delta", "--key-type", "rsa")
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert session.key("delta", "rsa").exists()
+    assert "IdentityFile ~/.ssh/id_rsa_delta" in session.config_text()
+
+    login = session.via_alias("delta", session.target.noop, "rsa")
+    assert login.returncode == 0, login.stderr
+
+
 def test_bad_password_leaves_nothing_behind(session):
     if session.target.name == "ros7":
         pytest.skip("CHR admin has no password, so any password is taken")

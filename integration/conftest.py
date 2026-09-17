@@ -111,8 +111,8 @@ class Session:
             "SSH_ASKPASS_REQUIRE": "force",
         }
 
-    def key(self, alias: str) -> Path:
-        stem = "id_ed25519_" + alias.replace("-", "_")
+    def key(self, alias: str, key_type: str = "ed25519") -> Path:
+        stem = f"id_{key_type}_" + alias.replace("-", "_")
         return self.home / ".ssh" / stem
 
     def identities(self) -> list:
@@ -145,8 +145,8 @@ class Session:
             f"{self.target.user}@{HOST}", command,
         ])
 
-    def via_alias(self, alias: str,
-                  command: str) -> subprocess.CompletedProcess:
+    def via_alias(self, alias: str, command: str,
+                  key_type: str = "ed25519") -> subprocess.CompletedProcess:
         """Log in through the alias by key, no password path.
 
         The config points IdentityFile at ~, which ssh expands from the
@@ -154,7 +154,7 @@ class Session:
         """
         return self._run([
             "ssh", "-F", str(self.config), "-o", "BatchMode=yes",
-            "-o", "IdentitiesOnly=yes", "-i", str(self.key(alias)),
+            "-o", "IdentitiesOnly=yes", "-i", str(self.key(alias, key_type)),
             alias, command,
         ])
 

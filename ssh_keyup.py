@@ -39,6 +39,8 @@ SSH_PORT = 22
 MAX_PORT = 65535
 CONNECT_TIMEOUT = 3.0
 BANNER_TIMEOUT = 1.0
+KEY_TYPES = ("ed25519", "rsa")
+RSA_BITS = 4096
 
 
 class TargetOS(Enum):
@@ -419,7 +421,7 @@ class SSHConfig:
 
     @staticmethod
     def _build_block(
-        alias: str, host: str, user: str, file_alias: str,
+        alias: str, host: str, user: str, key_name: str,
         port: int = SSH_PORT,
     ) -> str:
         """Build the SSH config block text for a managed host entry."""
@@ -431,7 +433,7 @@ class SSHConfig:
             f"    HostName {host}\n"
             f"    User {user}\n"
             f"{port_line}"
-            f"    IdentityFile ~/.ssh/id_ed25519_{file_alias}\n"
+            f"    IdentityFile ~/.ssh/{key_name}\n"
             f"#ssh-keyup:end {alias}\n"
         )
 
@@ -565,10 +567,10 @@ class SSHConfig:
     @staticmethod
     def update(
         ssh_config: Path, alias: str, host: str, user: str,
-        file_alias: str, base_text: str, port: int = SSH_PORT,
+        key_name: str, base_text: str, port: int = SSH_PORT,
     ) -> None:
         """Write or replace the SSH config entry."""
-        block = SSHConfig._build_block(alias, host, user, file_alias, port)
+        block = SSHConfig._build_block(alias, host, user, key_name, port)
         if base_text:
             text = base_text.rstrip("\n") + "\n\n" + block
         else:
@@ -643,7 +645,8 @@ class Deployer:
         return lines
 
     @staticmethod
-    def _report_failure(stderr: str, target_os: TargetOS) -> None:
+    def _report_failure(stderr: str, target_os: TargetOS,
+                        pub_key: str) -> None:
         """Explain failed deploy, a remote error is not a login error."""
         if Deployer._is_authenticated(stderr):
             cli.fail("\nLogged in, but install command failed on device.")
@@ -654,7 +657,9 @@ class Deployer:
         if target_os is not TargetOS.ROUTEROS:
             return
         if "unable to load key" in stderr:
-            cli.hint("Ed25519 keys need RouterOS 7.12 or newer.")
+            # Only Ed25519 has a version floor, RSA loads on any RouterOS 7
+            if pub_key.startswith("ssh-ed25519"):
+                cli.hint("Ed25519 keys need RouterOS 7.12 or newer.")
         elif "not enough permissions" in stderr:
             cli.hint("User needs the policy permission, "
                      "the full group has it.")
@@ -771,7 +776,7 @@ class Deployer:
                     port=port)
 
         if not Deployer._succeeded(rc, stderr, target_os):
-            Deployer._report_failure(stderr, target_os)
+            Deployer._report_failure(stderr, target_os, pub_key)
             return None
         return target_os
 
@@ -968,6 +973,8 @@ def parse_args() -> argparse.Namespace:
                    help="SSH port of the remote device (default: 22)")
     p.add_argument("--os", choices=[o.value for o in TargetOS],
                    help="target OS, detected from SSH banner by default")
+    p.add_argument("--key-type", choices=KEY_TYPES, default=KEY_TYPES[0],
+                   help="key type to generate (default: ed25519)")
     p.add_argument("--list", action="store_true",
                    help="list entries managed by ssh-keyup")
     p.add_argument("--remove", metavar="ALIAS",
@@ -1042,19 +1049,46 @@ def gather_input(
     return host, user, alias, port, target_os
 
 
-def generate_key(runner: Runner, key_path: Path) -> None:
-    """Generate an Ed25519 key pair."""
+def generate_key(runner: Runner, key_path: Path, key_type: str) -> None:
+    """Generate a key pair of the given type."""
+    # ssh-keygen's RSA default varies by client version, so pin it
+    opts = ["-t", key_type]
+    if key_type == "rsa":
+        opts += ["-b", str(RSA_BITS)]
+
     if runner.mode == "native":
         rc = runner.run([
-            "ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key_path),
+            "ssh-keygen", *opts, "-N", "", "-f", str(key_path),
         ])
     else:
         rc = runner.run(
-            f"ssh-keygen -t ed25519 -N '' -f ~/.ssh/{key_path.name}"
+            f"ssh-keygen {' '.join(opts)} -N '' -f ~/.ssh/{key_path.name}"
         )
 
     if rc != 0:
         cli.fatal("ssh-keygen failed.")
+
+
+def prune_other_type(ssh_dir: Path, file_alias: str, key_type: str) -> None:
+    """Offer to delete a key this alias no longer uses.
+
+    Runs after deploy succeeds, so old key is safe to drop.
+    """
+    for other in KEY_TYPES:
+        if other == key_type:
+            continue
+        stale = ssh_dir / f"id_{other}_{file_alias}"
+        pub = ssh_dir / f"{stale.name}.pub"
+        if not (stale.exists() or pub.exists()):
+            continue
+        cli.msg(f"Alias no longer uses {stale.name}")
+        if not cli.ask_yn(f"Delete {stale.name}?"):
+            continue
+        try:
+            stale.unlink(missing_ok=True)
+            pub.unlink(missing_ok=True)
+        except OSError as ex:
+            cli.warn(f"Could not delete {stale.name}: {ex}")
 
 
 def discard_keys(key_path: Path, pub_path: Path) -> None:
@@ -1095,8 +1129,9 @@ def main() -> None:
 
         ssh_dir.mkdir(parents=True, exist_ok=True)
 
-        key_path = ssh_dir / f"id_ed25519_{file_alias}"
-        pub_path = ssh_dir / f"id_ed25519_{file_alias}.pub"
+        key_name = f"id_{args.key_type}_{file_alias}"
+        key_path = ssh_dir / key_name
+        pub_path = ssh_dir / f"{key_name}.pub"
 
         key_generated = False
         if pub_path.exists():
@@ -1104,10 +1139,10 @@ def main() -> None:
             if cli.ask_yn("Regenerate key pair?"):
                 key_path.unlink(missing_ok=True)
                 pub_path.unlink()
-                generate_key(runner, key_path)
+                generate_key(runner, key_path, args.key_type)
                 key_generated = True
         else:
-            generate_key(runner, key_path)
+            generate_key(runner, key_path, args.key_type)
             key_generated = True
 
         cli.separator()
@@ -1135,11 +1170,12 @@ def main() -> None:
             sys.exit(1)
 
         try:
-            SSHConfig.update(ssh_config, alias, host, user, file_alias,
+            SSHConfig.update(ssh_config, alias, host, user, key_name,
                              config_base, port)
         except OSError as ex:
             cli.fatal(f"Key deployed, but SSH config update failed: {ex}")
         cli.msg(f"Config updated {ssh_config}")
+        prune_other_type(ssh_dir, file_alias, args.key_type)
 
         cli.separator()
         cli.success(f"SSH key deployed for '{alias}'.")

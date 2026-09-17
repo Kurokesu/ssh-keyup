@@ -3,6 +3,7 @@
 
 import socket
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -68,6 +69,14 @@ class TestParseArgs:
     def test_port_flag(self):
         assert parse(["rpi-5", "--port", "2222"]).port == 2222
         assert parse(["rpi-5"]).port is None
+
+    def test_key_type_defaults_to_ed25519(self):
+        assert parse(["rpi-5"]).key_type == "ed25519"
+        assert parse(["rpi-5", "--key-type", "rsa"]).key_type == "rsa"
+
+    def test_rejects_unknown_key_type(self):
+        with pytest.raises(SystemExit):
+            parse(["rpi-5", "--key-type", "dsa"])
 
     @pytest.mark.parametrize("argv", [
         ["rpi-5", "--port", "0"],
@@ -243,10 +252,11 @@ class FakeRunner:
     differently, the last entry repeats.
     """
 
-    def __init__(self, rc=0, out="", results=None):
+    def __init__(self, rc=0, out="", results=None, mode="native"):
         self.results = list(results) if results else [(rc, out)]
         self.cmds = []
         self.inputs = []
+        self.mode = mode
 
     def _next(self, cmd, kwargs):
         self.cmds.append(cmd)
@@ -254,6 +264,9 @@ class FakeRunner:
         if len(self.results) > 1:
             return self.results.pop(0)
         return self.results[0]
+
+    def run(self, cmd, **kwargs):
+        return self._next(cmd, kwargs)[0]
 
     def run_stdout(self, cmd, **kwargs):
         return self._next(cmd, kwargs)
@@ -402,14 +415,98 @@ class TestGatherInput:
 class TestBuildBlock:
     def test_omits_port_line_on_default(self):
         block = ssh_keyup.SSHConfig._build_block(
-            "mypi", "10.0.0.5", "pi", "mypi")
+            "mypi", "10.0.0.5", "pi", "id_ed25519_mypi")
         assert "Port" not in block
         assert "    HostName 10.0.0.5\n" in block
 
     def test_writes_port_line_when_custom(self):
         block = ssh_keyup.SSHConfig._build_block(
-            "mypi", "10.0.0.5", "pi", "mypi", 2222)
+            "mypi", "10.0.0.5", "pi", "id_ed25519_mypi", 2222)
         assert "    Port 2222\n" in block
+
+    @pytest.mark.parametrize("key_name", [
+        "id_ed25519_mypi", "id_rsa_mypi",
+    ])
+    def test_identity_file_follows_key_name(self, key_name):
+        block = ssh_keyup.SSHConfig._build_block(
+            "mypi", "10.0.0.5", "pi", key_name)
+        assert f"    IdentityFile ~/.ssh/{key_name}\n" in block
+
+
+class TestGenerateKey:
+    def test_ed25519_takes_no_size(self):
+        runner = FakeRunner()
+        ssh_keyup.generate_key(runner, Path("id_ed25519_mypi"), "ed25519")
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index("-t") + 1] == "ed25519"
+        assert "-b" not in cmd
+
+    def test_rsa_pins_size(self):
+        runner = FakeRunner()
+        ssh_keyup.generate_key(runner, Path("id_rsa_mypi"), "rsa")
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index("-t") + 1] == "rsa"
+        assert cmd[cmd.index("-b") + 1] == str(ssh_keyup.RSA_BITS)
+
+    def test_git_bash_carries_the_same_options(self):
+        runner = FakeRunner(mode="gitbash")
+        ssh_keyup.generate_key(runner, Path("id_rsa_mypi"), "rsa")
+        assert f"-t rsa -b {ssh_keyup.RSA_BITS}" in runner.cmds[0]
+
+    def test_exits_when_keygen_fails(self):
+        with pytest.raises(SystemExit):
+            ssh_keyup.generate_key(
+                FakeRunner(rc=1), Path("id_rsa_mypi"), "rsa")
+
+
+class TestPruneOtherType:
+    @staticmethod
+    def seed(ssh_dir, name):
+        key = ssh_dir / name
+        key.write_text("private")
+        (ssh_dir / f"{name}.pub").write_text("public")
+        return key
+
+    def test_offers_and_deletes_the_stale_pair(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        stale = self.seed(tmp_path, "id_ed25519_mypi")
+
+        ssh_keyup.prune_other_type(tmp_path, "mypi", "rsa")
+
+        assert not stale.exists()
+        assert not (tmp_path / "id_ed25519_mypi.pub").exists()
+
+    def test_keeps_the_pair_when_declined(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        stale = self.seed(tmp_path, "id_ed25519_mypi")
+
+        ssh_keyup.prune_other_type(tmp_path, "mypi", "rsa")
+
+        assert stale.exists()
+
+    def test_never_touches_the_key_in_use(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        current = self.seed(tmp_path, "id_rsa_mypi")
+
+        ssh_keyup.prune_other_type(tmp_path, "mypi", "rsa")
+
+        assert current.exists()
+
+    def test_leaves_other_aliases_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        other = self.seed(tmp_path, "id_ed25519_otherpi")
+
+        ssh_keyup.prune_other_type(tmp_path, "mypi", "rsa")
+
+        assert other.exists()
+
+    def test_asks_nothing_when_there_is_no_stale_key(self, tmp_path,
+                                                     monkeypatch):
+        def refuse(msg):
+            raise AssertionError("should not prompt")
+
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", refuse)
+        ssh_keyup.prune_other_type(tmp_path, "mypi", "rsa")
 
 
 class TestSSHCommand:
@@ -568,6 +665,9 @@ ROUTEROS_REJECT = CLEAN_STDERR.replace(
     "failure: unable to load key file (wrong format or bad passphrase)! "
     "(/user/ssh-keys/add; line 1)\nTransferred:")
 
+ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 pi@rpi"
+RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB pi@rpi"
+
 # Verbose stderr after a rejected password
 AUTH_FAIL_STDERR = """\
 OpenSSH_9.5p2, LibreSSL 3.8.2
@@ -607,7 +707,7 @@ class TestReportFailure:
 
     def test_remote_failure_is_not_a_login_failure(self, capsys):
         ssh_keyup.Deployer._report_failure(AUTH_OK_STDERR,
-                                           ssh_keyup.TargetOS.LINUX)
+                                           ssh_keyup.TargetOS.LINUX, ED25519)
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "bad command name mkdir" in out
@@ -616,7 +716,7 @@ class TestReportFailure:
 
     def test_login_failure_names_credentials(self, capsys):
         ssh_keyup.Deployer._report_failure(AUTH_FAIL_STDERR,
-                                           ssh_keyup.TargetOS.LINUX)
+                                           ssh_keyup.TargetOS.LINUX, ED25519)
         out = capsys.readouterr().out
         assert "Check host and credentials" in out
         assert "Permission denied (publickey,password)" in out
@@ -627,11 +727,19 @@ class TestReportFailure:
 
     def test_routeros_rejected_key_hints_version(self, capsys):
         ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
-                                           ssh_keyup.TargetOS.ROUTEROS)
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "unable to load key file" in out
         assert "7.12" in out
+
+    def test_rejected_rsa_key_skips_the_version_hint(self, capsys):
+        ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
+                                           ssh_keyup.TargetOS.ROUTEROS, RSA)
+        out = capsys.readouterr().out
+        assert "unable to load key file" in out
+        assert "7.12" not in out
 
     def test_routeros_permission_error_hints_policy(self, capsys):
         stderr = CLEAN_STDERR.replace(
@@ -639,7 +747,8 @@ class TestReportFailure:
             "not enough permissions (9) (/user/ssh-keys/add; line 1)\n"
             "Transferred:")
         ssh_keyup.Deployer._report_failure(stderr,
-                                           ssh_keyup.TargetOS.ROUTEROS)
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
         out = capsys.readouterr().out
         assert "policy permission" in out
         assert "7.12" not in out
@@ -647,14 +756,15 @@ class TestReportFailure:
     @pytest.mark.parametrize("stderr", [AUTH_FAIL_STDERR, ROUTEROS_STDERR])
     def test_routeros_other_failures_have_no_hint(self, capsys, stderr):
         ssh_keyup.Deployer._report_failure(stderr,
-                                           ssh_keyup.TargetOS.ROUTEROS)
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
         out = capsys.readouterr().out
         assert "7.12" not in out
         assert "policy" not in out
 
     def test_linux_gets_no_routeros_hints(self, capsys):
         ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
-                                           ssh_keyup.TargetOS.LINUX)
+                                           ssh_keyup.TargetOS.LINUX, ED25519)
         assert "7.12" not in capsys.readouterr().out
 
 

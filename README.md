@@ -58,7 +58,7 @@ ssh-keyup pi@192.168.1.23:2222 mypi   # non-default SSH port
 ssh-keyup admin@192.168.88.1 router   # RouterOS, detected automatically
 ```
 
-Flags (`--host`, `--user`, `--alias`, `--port`, `--os`) work too, see `ssh-keyup --help`
+Flags (`--host`, `--user`, `--alias`, `--port`, `--os`, `--key-type`) work too, see `ssh-keyup --help`
 
 ### Set up a fleet
 
@@ -158,6 +158,10 @@ No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `a
 ### What devices are supported?
 
 Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers. Any RouterOS 7.12 or newer device, MikroTik routers or CHR alike, is detected from SSH banner and gets its own key import, `--os routeros` forces it.
+
+### Can I use an RSA key instead of Ed25519?
+
+Yes. `--key-type rsa` generates a 4096-bit RSA key for devices or policies that will not take Ed25519. Keys carry their type in the name, `id_ed25519_mypi` or `id_rsa_mypi`, so switching type for an alias leaves the old key alone and ssh-keyup offers to delete it once the new one is verified working.
 
 ### How do I add an SSH key to a MikroTik router from Windows?
 

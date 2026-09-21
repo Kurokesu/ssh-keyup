@@ -10,10 +10,15 @@ on:
 
 jobs:
   target:
+    name: target (${{ matrix.service }})
     strategy:
       fail-fast: false
       matrix:
-        service: [linux, ros7]
+        include:
+          - service: linux
+            port: 2200
+          - service: ros7
+            port: 2207
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,6 +38,37 @@ jobs:
         run: docker compose -f integration/compose.yml up -d ${{ matrix.service }}
       - name: Install pytest
         run: pip install pytest
+      - name: Wait for target
+        env:
+          PORT: ${{ matrix.port }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          # Docker publishes the port before the guest listens, so only a
+          # banner proves readiness
+          probe() {
+            local banner
+            banner=$({ read -t 3 -r line < "/dev/tcp/127.0.0.1/$PORT" \
+                && printf '%s' "$line"; } 2>/dev/null) || true
+            case $banner in SSH-*) return 0 ;; esac
+            return 1
+          }
+          await() {
+            local start=$SECONDS
+            while [ $((SECONDS - start)) -lt 60 ]; do
+              if probe; then
+                echo "$SERVICE answered in $((SECONDS - start))s"
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+          if await; then exit 0; fi
+          echo "$SERVICE silent for 60s, replacing it"
+          docker compose -f integration/compose.yml restart "$SERVICE"
+          if await; then exit 0; fi
+          echo "$SERVICE never answered, giving up"
+          exit 1
       # Strict so a target that never booted fails instead of skipping green
       - name: Run integration tests
         env:

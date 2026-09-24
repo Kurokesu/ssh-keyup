@@ -107,9 +107,9 @@ update ssh config   ~/.ssh/config
 
 ## FAQ
 
-### Why not do it by hand?
+### How do I set up passwordless SSH from Windows by hand?
 
-Usual commands for passwordless SSH from Windows:
+Usual commands:
 
 ```powershell
 ssh-keygen -t ed25519
@@ -119,9 +119,9 @@ notepad $env:USERPROFILE\.ssh\config   # then add a Host block by hand
 
 Works once. Same key lands on every device, `~/.ssh` keeps default permissions that sshd may reject and each new device means another config edit.
 
-### Why not ssh-copy-id?
+### Is there ssh-copy-id for Windows?
 
-`ssh-copy-id` appends a key to `authorized_keys` and stops there. Windows OpenSSH does not ship it at all and RouterOS has no `authorized_keys` to append to.
+Not built in. Windows OpenSSH does not ship it and RouterOS has no `authorized_keys` for it to append to. `ssh-keyup` covers both as an `ssh-copy-id` alternative:
 
 |  | ssh-keyup | ssh-copy-id |
 |---|:---:|:---:|

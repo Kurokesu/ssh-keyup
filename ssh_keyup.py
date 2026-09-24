@@ -40,11 +40,23 @@ SSH_PORT = 22
 MAX_PORT = 65535
 CONNECT_TIMEOUT = 3.0
 BANNER_TIMEOUT = 1.0
+
 KEY_TYPES = ("ed25519", "rsa")
 RSA_BITS = 4096
+
 SIGNAL_EXIT_BASE = 128
 STD_OUTPUT_HANDLE = -11
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
+ESC = "\x1b"
+CTRL_C = "\x03"
+SCAN_PREFIXES = ("\x00", "\xe0")
+KEY_NAMES = {
+    "\r": "enter", "\n": "enter", ESC: "esc",
+    ESC + "[D": "left", ESC + "[C": "right",
+}
+SCAN_NAMES = {"K": "left", "M": "right"}
+KEY_SPLIT = re.compile(re.escape(ESC) + r"\[.|.", re.DOTALL)
 
 
 class TargetOS(Enum):
@@ -86,17 +98,6 @@ def key_fingerprint(pub_key: str) -> str:
         return ""
     digest = base64.b64encode(hashlib.sha256(blob).digest()).decode()
     return f"SHA256:{digest}"
-
-
-ESC = "\x1b"
-CTRL_C = "\x03"
-SCAN_PREFIXES = ("\x00", "\xe0")
-KEY_NAMES = {
-    "\r": "enter", "\n": "enter", ESC: "esc",
-    ESC + "[D": "left", ESC + "[C": "right",
-}
-SCAN_NAMES = {"K": "left", "M": "right"}
-KEY_SPLIT = re.compile(re.escape(ESC) + r"\[.|.", re.DOTALL)
 
 
 class CLI:

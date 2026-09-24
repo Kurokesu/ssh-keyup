@@ -220,11 +220,6 @@ class CLI:
         print(f"{CLI.S_WARN}{msg}{CLI.RESET}")
 
     @staticmethod
-    def ssh_info(msg: str) -> None:
-        """Print an SSH info/detail line."""
-        print(f"  {CLI.S_MUTED}{msg}{CLI.RESET}")
-
-    @staticmethod
     def prompt(
         label: str, value: str | None = None, *,
         hint: str = "", default: str = "",
@@ -653,7 +648,7 @@ class Deployer:
         else:
             cli.fail("\nSSH connection failed. Check host and credentials.")
         for line in Deployer._error_lines(stderr):
-            cli.ssh_info(line)
+            cli.hint(f"  {line}")
         if target_os is not TargetOS.ROUTEROS:
             return
         if "unable to load key" in stderr:
@@ -916,7 +911,7 @@ def check_reachable(host: str, port: int = SSH_PORT) -> str:
 
     cli.failed()
     cli.warn(failure[0])
-    cli.ssh_info(failure[1])
+    cli.hint(f"  {failure[1]}")
     cli.msg()
     if not cli.ask_yn("Continue anyway?"):
         cli.cancel()

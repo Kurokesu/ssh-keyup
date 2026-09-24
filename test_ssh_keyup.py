@@ -254,12 +254,16 @@ class TestCheckExisting:
         assert exc.value.code == 0
         assert cfg.read_text() == SAMPLE_CONFIG
 
-    def test_remove_stale_writes_base(self, tmp_path, monkeypatch):
+    def test_missing_config(self, tmp_path):
+        cfg = tmp_path / "config"
+        assert ssh_keyup.SSHConfig.check_existing(cfg, "mypi") == ("", False)
+
+    def test_writing_base_drops_entry(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
         base, _ = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
-        ssh_keyup.SSHConfig.remove_stale(cfg, base)
+        ssh_keyup.SSHConfig.write(cfg, base)
         text = cfg.read_text()
         assert "#ssh-keyup:begin mypi" not in text
         assert "#ssh-keyup:begin jet" in text
@@ -913,12 +917,12 @@ class TestAtomicWrite:
     ])
     def test_normalizes_trailing_newline(self, tmp_path, text, expected):
         cfg = tmp_path / "config"
-        ssh_keyup.SSHConfig._atomic_write(cfg, text)
+        ssh_keyup.SSHConfig.write(cfg, text)
         assert cfg.read_text() == expected
 
     def test_leaves_no_temp_file_behind(self, tmp_path):
         cfg = tmp_path / "config"
-        ssh_keyup.SSHConfig._atomic_write(cfg, "Host a\n")
+        ssh_keyup.SSHConfig.write(cfg, "Host a\n")
         assert [p.name for p in tmp_path.iterdir()] == ["config"]
 
 

@@ -440,10 +440,7 @@ class SSHConfig:
     @staticmethod
     def check_existing(ssh_config: Path, alias: str) -> tuple[str, bool]:
         """Check for an existing alias, prompt to overwrite."""
-        if not ssh_config.exists():
-            return "", False
-
-        text = ssh_config.read_text(encoding="utf-8")
+        text = SSHConfig._read(ssh_config)
         blocks = SSHConfig._find_managed_blocks(text)
 
         has_unmanaged = SSHConfig._has_unmanaged_host(text, alias, blocks)
@@ -467,11 +464,6 @@ class SSHConfig:
         return SSHConfig._splice_out(text, blocks[alias]), True
 
     @staticmethod
-    def remove_stale(ssh_config: Path, base_text: str) -> None:
-        """Write config with the overwritten entry spliced out."""
-        SSHConfig._atomic_write(ssh_config, base_text)
-
-    @staticmethod
     def collect_entries(text: str) -> list[dict[str, str]]:
         """Parse managed entries from SSH config text."""
         entries = []
@@ -490,9 +482,7 @@ class SSHConfig:
     @staticmethod
     def list_entries(ssh_config: Path) -> None:
         """Print managed entries as aligned columns."""
-        text = (ssh_config.read_text(encoding="utf-8")
-                if ssh_config.exists() else "")
-        entries = SSHConfig.collect_entries(text)
+        entries = SSHConfig.collect_entries(SSHConfig._read(ssh_config))
         if not entries:
             cli.msg("No entries managed by ssh-keyup.")
             return
@@ -509,8 +499,7 @@ class SSHConfig:
     @staticmethod
     def remove_entry(ssh_config: Path, alias: str) -> None:
         """Remove a managed entry and its key pair."""
-        text = (ssh_config.read_text(encoding="utf-8")
-                if ssh_config.exists() else "")
+        text = SSHConfig._read(ssh_config)
         blocks = SSHConfig._find_managed_blocks(text)
         if alias not in blocks:
             cli.fatal(f"No entry '{alias}' managed by ssh-keyup.")
@@ -518,8 +507,7 @@ class SSHConfig:
         start, end = blocks[alias]
         key = SSHConfig._field(text[start:end], "IdentityFile")
 
-        new_text = SSHConfig._splice_out(text, blocks[alias])
-        SSHConfig._atomic_write(ssh_config, new_text)
+        SSHConfig.write(ssh_config, SSHConfig._splice_out(text, blocks[alias]))
         cli.msg(f"Removed '{alias}' from {ssh_config}")
 
         if not key:
@@ -532,7 +520,14 @@ class SSHConfig:
             cli.msg(f"Deleted key pair {key_path.name}")
 
     @staticmethod
-    def _atomic_write(ssh_config: Path, text: str) -> None:
+    def _read(ssh_config: Path) -> str:
+        """SSH config text, empty when the file does not exist yet."""
+        if not ssh_config.exists():
+            return ""
+        return ssh_config.read_text(encoding="utf-8")
+
+    @staticmethod
+    def write(ssh_config: Path, text: str) -> None:
         """Write text to SSH config atomically, one trailing newline."""
         if text:
             text = text.rstrip("\n") + "\n"
@@ -556,7 +551,7 @@ class SSHConfig:
             text = base_text.rstrip("\n") + "\n\n" + block
         else:
             text = block
-        SSHConfig._atomic_write(ssh_config, text)
+        SSHConfig.write(ssh_config, text)
 
 
 class Deployer:
@@ -1121,7 +1116,7 @@ def main() -> None:
         try:
             if overwriting:
                 try:
-                    SSHConfig.remove_stale(ssh_config, config_base)
+                    SSHConfig.write(ssh_config, config_base)
                 except OSError as ex:
                     if key_generated:
                         discard_keys(key_path, pub_path)

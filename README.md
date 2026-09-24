@@ -84,12 +84,12 @@ ssh-keyup --remove mypi   # deletes its key pair too
 
 ## How it works
 
-```mermaid
-flowchart LR
-    run["ssh-keyup"] --> check["check connection"]
-    check --> gen["generate ed25519 key<br/>~/.ssh/id_ed25519_mypi"]
-    gen --> deploy["deploy public key<br/>~/.ssh/authorized_keys<br/>or /user/ssh-keys on RouterOS"]
-    deploy --> config["update ssh config<br/>~/.ssh/config"]
+```text
+                    local                        remote
+check connection    -------- SSH port -------->  sshd
+generate key        ~/.ssh/id_ed25519_mypi
+deploy public key   -------- public key ------>  ~/.ssh/authorized_keys
+update ssh config   ~/.ssh/config
 ```
 
 ## Features

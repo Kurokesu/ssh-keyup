@@ -959,7 +959,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__version__}")
-    p.add_argument("target", nargs="?", metavar="[user@]host",
+    p.add_argument("target", nargs="?", metavar="[user@]host[:port]",
                    help="remote device, e.g. pi@192.168.1.23")
     p.add_argument("alias_pos", nargs="?", metavar="alias",
                    help="friendly name for ~/.ssh/config (default: hostname)")

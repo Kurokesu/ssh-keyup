@@ -3,6 +3,8 @@
 
 import socket
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -128,6 +130,38 @@ class FakeStdin:
 
     def isatty(self):
         return True
+
+
+class TestPending:
+    @staticmethod
+    def _tty(monkeypatch):
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        monkeypatch.setattr(ssh_keyup, "DOT_PERIOD", 0.01)
+
+    def test_static_without_terminal(self, capsys):
+        threads = threading.active_count()
+        with ssh_keyup.cli.pending("Checking"):
+            assert threading.active_count() == threads
+        assert capsys.readouterr().out == "Checking ... "
+
+    def test_animates_then_leaves_static_line(self, monkeypatch, capsys):
+        self._tty(monkeypatch)
+        threads = threading.active_count()
+        with ssh_keyup.cli.pending("Checking"):
+            time.sleep(0.1)
+        out = capsys.readouterr().out
+        assert out.startswith("Checking ")
+        assert out.count("...\b\b\b") > 2
+        assert out.endswith("... ")
+        assert threading.active_count() == threads
+
+    def test_error_in_body_stops_animation(self, monkeypatch, capsys):
+        self._tty(monkeypatch)
+        threads = threading.active_count()
+        with pytest.raises(RuntimeError), ssh_keyup.cli.pending("Checking"):
+            raise RuntimeError
+        assert capsys.readouterr().out.endswith("... ")
+        assert threading.active_count() == threads
 
 
 class TestAskYn:

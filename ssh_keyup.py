@@ -16,6 +16,7 @@ import base64
 import contextlib
 import hashlib
 import ipaddress
+import itertools
 import os
 import re
 import shlex
@@ -24,6 +25,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -47,6 +50,7 @@ RSA_BITS = 4096
 SIGNAL_EXIT_BASE = 128
 STD_OUTPUT_HANDLE = -11
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+DOT_PERIOD = 0.2
 
 ESC = "\x1b"
 CTRL_C = "\x03"
@@ -193,6 +197,37 @@ class CLI:
     def status(msg: str, end: str = "\n") -> None:
         """Print a status/progress message."""
         print(f"{CLI.S_STATUS}{msg}{CLI.RESET}", end=end, flush=True)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def pending(msg: str) -> Iterator[None]:
+        """Animate msg's dots while the body runs, ok() or failed() ends it."""
+        CLI.status(f"{msg} ", end="")
+        done = threading.Event()
+
+        def animate() -> None:
+            for lit in itertools.cycle(range(3)):
+                dots = "".join(f"{CLI.S_STATUS}{'' if i == lit else CLI.S_MUTED}."
+                               f"{CLI.RESET}" for i in range(3))
+                sys.stdout.write(f"{dots}\b\b\b")
+                sys.stdout.flush()
+                if done.wait(DOT_PERIOD):
+                    return
+
+        thread = threading.Thread(target=animate, daemon=True)
+        if sys.stdout.isatty():
+            sys.stdout.write(CLI.HIDE_CUR)
+            thread.start()
+        try:
+            yield
+        finally:
+            done.set()
+            if thread.is_alive():
+                thread.join()
+                # Redraw from line start, a ^C echo may sit on the dots
+                sys.stdout.write(f"\r{CLI.CLEAR_LINE}{CLI.SHOW_CUR}")
+                CLI.status(f"{msg} ", end="")
+            CLI.status("... ", end="")
 
     @staticmethod
     def ok(msg: str = "ok") -> None:
@@ -876,8 +911,8 @@ def check_reachable(
     Fallback is the typed name, tried when its SSH config target fails.
     On failure explain why and offer to continue, banner is then empty.
     """
-    cli.status("Checking connection ... ", end="")
-    banner, failure = probe_port(host, port)
+    with cli.pending("Checking connection"):
+        banner, failure = probe_port(host, port)
     if failure is None:
         cli.ok()
         return host, port, banner
@@ -886,8 +921,8 @@ def check_reachable(
     if fallback:
         fb_host, fb_port = fallback
         shown = fb_host if fb_port == SSH_PORT else f"{fb_host}:{fb_port}"
-        cli.status(f"Trying '{shown}' as hostname ... ", end="")
-        banner, fb_failure = probe_port(fb_host, fb_port)
+        with cli.pending(f"Trying '{shown}' as hostname"):
+            banner, fb_failure = probe_port(fb_host, fb_port)
         if fb_failure is None:
             cli.ok()
             return fb_host, fb_port, banner

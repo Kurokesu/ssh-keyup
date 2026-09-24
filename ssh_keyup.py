@@ -176,8 +176,7 @@ class CLI:
     @staticmethod
     def fail(msg: str) -> None:
         """Print an error message, pip-style."""
-        nl = "\n" if msg.startswith("\n") else ""
-        print(f"{nl}{CLI.S_FAIL}Error:{CLI.RESET} {msg.lstrip()}")
+        print(f"{CLI.S_FAIL}Error:{CLI.RESET} {msg}")
 
     @staticmethod
     def fatal(msg: str) -> None:
@@ -208,11 +207,7 @@ class CLI:
     @staticmethod
     def cancel(msg: str = "") -> None:
         """Print a cancellation message."""
-        print(f"{CLI.S_WARN}Cancelled.{CLI.RESET}", end="")
-        if msg:
-            print(f" {msg}")
-        else:
-            print()
+        print(f"{CLI.S_WARN}Cancelled.{CLI.RESET} {msg}".rstrip())
 
     @staticmethod
     def ssh_warning(msg: str) -> None:
@@ -643,10 +638,11 @@ class Deployer:
     def _report_failure(stderr: str, target_os: TargetOS,
                         pub_key: str) -> None:
         """Explain failed deploy, a remote error is not a login error."""
+        cli.msg()
         if Deployer._is_authenticated(stderr):
-            cli.fail("\nLogged in, but install command failed on device.")
+            cli.fail("Logged in, but install command failed on device.")
         else:
-            cli.fail("\nSSH connection failed. Check host and credentials.")
+            cli.fail("SSH connection failed. Check host and credentials.")
         for line in Deployer._error_lines(stderr):
             cli.hint(f"  {line}")
         if target_os is not TargetOS.ROUTEROS:

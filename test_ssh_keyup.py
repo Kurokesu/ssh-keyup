@@ -198,6 +198,17 @@ class TestAskYn:
         monkeypatch.setattr(ssh_keyup.CLI, "_read_keys", lambda: next(chunks))
         assert ssh_keyup.CLI.ask_yn("Q", default) is expected
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows console")
+    def test_drops_keys_typed_before_prompt(self, monkeypatch):
+        buffered = ["\x1b", "n"]
+        monkeypatch.setattr(ssh_keyup.msvcrt, "kbhit", lambda: bool(buffered))
+        monkeypatch.setattr(ssh_keyup.msvcrt, "getwch", buffered.pop)
+        monkeypatch.setattr(sys, "stdin", FakeStdin())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        monkeypatch.setattr(ssh_keyup.CLI, "_read_keys", lambda: ["enter"])
+        assert ssh_keyup.CLI.ask_yn("Q", default=True) is True
+        assert buffered == []
+
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX terminal only")
 class TestReadKey:

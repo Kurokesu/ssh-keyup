@@ -581,12 +581,12 @@ class TestPruneOtherType:
 class TestSSHCommand:
     def test_omits_port_flag_on_default(self):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key")
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi", "h", "cmd", b"key")
         assert "-p" not in runner.cmds[0]
 
     def test_passes_port_flag_when_custom(self):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key",
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi", "h", "cmd", b"key",
                                     port=2222)
         cmd = runner.cmds[0]
         assert cmd[cmd.index("-p") + 1] == "2222"
@@ -594,14 +594,25 @@ class TestSSHCommand:
     @pytest.mark.parametrize("accept_new", [False, True])
     def test_always_verbose(self, accept_new):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key",
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi", "h", "cmd", b"key",
                                     accept_new=accept_new)
         assert "-v" in runner.cmds[0]
 
     def test_feeds_stdin(self):
         runner = FakeRunner()
-        ssh_keyup.Deployer._ssh_cmd(runner, "pi@h", "cmd", b"key")
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi", "h", "cmd", b"key")
         assert runner.inputs == [b"key"]
+
+    @pytest.mark.parametrize("host, pinned", [
+        ("testpi", "HostName=testpi"),
+        ("fe80::1%eth0", "HostName=fe80::1%%eth0"),
+    ])
+    def test_pins_probed_host(self, host, pinned):
+        runner = FakeRunner()
+        ssh_keyup.Deployer._ssh_cmd(runner, "pi", host, "cmd", b"key")
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index(pinned) - 1] == "-o"
+        assert f"pi@{host}" in cmd
 
 
 class TestTargetOS:

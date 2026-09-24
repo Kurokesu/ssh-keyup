@@ -15,6 +15,11 @@ Tired of juggling `ssh-keygen`, `ssh-copy-id` (missing on Windows) and `~/.ssh/c
 
 ## Quickstart
 
+Needs **Python 3.8+** and OpenSSH tools (`ssh`, `ssh-keygen`) in PATH:
+
+- **Windows 10/11**: Python from [python.org](https://www.python.org/downloads/) or Microsoft Store. OpenSSH Client via Settings > Optional Features or [Git for Windows](https://gitforwindows.org).
+- **Linux**: `sudo apt install python3 openssh-client` (usually pre-installed).
+
 Install globally with pip:
 
 ```bash
@@ -76,13 +81,6 @@ List or remove entries ssh-keyup manages:
 ssh-keyup --list
 ssh-keyup --remove mypi   # deletes its key pair too
 ```
-
-## Prerequisites
-
-**Python 3.8+** and OpenSSH tools (`ssh`, `ssh-keygen`) in PATH.
-
-- **Windows 10/11**: Python from [python.org](https://www.python.org/downloads/) or Microsoft Store. OpenSSH Client via Settings > Optional Features or [Git for Windows](https://gitforwindows.org).
-- **Linux**: `sudo apt install python3 openssh-client` (usually pre-installed).
 
 ## How it works
 

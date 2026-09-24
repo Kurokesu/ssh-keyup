@@ -84,6 +84,16 @@ def key_fingerprint(pub_key: str) -> str:
     return f"SHA256:{digest}"
 
 
+ESC = "\x1b"
+CTRL_C = "\x03"
+SCAN_PREFIXES = ("\x00", "\xe0")
+KEY_NAMES = {
+    "\r": "enter", "\n": "enter", ESC: "esc",
+    ESC + "[D": "left", ESC + "[C": "right",
+}
+SCAN_NAMES = {"K": "left", "M": "right"}
+
+
 class CLI:
     """Styled terminal output and interaction. All UI in one place."""
 
@@ -241,31 +251,20 @@ class CLI:
         """Read a single keypress."""
         if sys.platform == "win32":
             ch = msvcrt.getwch()
-            if ch == "\x03":
-                raise KeyboardInterrupt
-            if ch in ("\r", "\n"):
-                return "enter"
-            if ch in ("\xe0", "\x00"):
-                return {"K": "left", "M": "right"}.get(msvcrt.getwch(), "")
-            return "esc" if ch == "\x1b" else ch
+            if ch in SCAN_PREFIXES:
+                return SCAN_NAMES.get(msvcrt.getwch(), "")
         else:
             fd = sys.stdin.fileno()
             old = termios.tcgetattr(fd)
             try:
                 tty.setraw(fd)
-                ch = sys.stdin.read(1)
-                if ch in ("\r", "\n"):
-                    return "enter"
-                if ch == "\x1b":
-                    if sys.stdin.read(1) == "[":
-                        return {"D": "left", "C": "right"}.get(
-                            sys.stdin.read(1), "")
-                    return "esc"
-                if ch == "\x03":
-                    raise KeyboardInterrupt
-                return ch
+                # One read returns a whole escape sequence or a lone Esc
+                ch = os.read(fd, 8).decode(errors="replace")
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if ch == CTRL_C:
+            raise KeyboardInterrupt
+        return KEY_NAMES.get(ch, ch)
 
     @staticmethod
     def ask_yn(prompt: str, default: bool = False) -> bool:

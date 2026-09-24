@@ -92,6 +92,7 @@ KEY_NAMES = {
     ESC + "[D": "left", ESC + "[C": "right",
 }
 SCAN_NAMES = {"K": "left", "M": "right"}
+KEY_SPLIT = re.compile(re.escape(ESC) + r"\[.|.", re.DOTALL)
 
 
 class CLI:
@@ -247,24 +248,25 @@ class CLI:
         print(msg)
 
     @staticmethod
-    def _read_key() -> str:
-        """Read a single keypress."""
+    def _read_keys() -> list[str]:
+        """Read waiting keypresses, escape sequences kept whole."""
         if sys.platform == "win32":
             ch = msvcrt.getwch()
             if ch in SCAN_PREFIXES:
-                return SCAN_NAMES.get(msvcrt.getwch(), "")
+                return [SCAN_NAMES.get(msvcrt.getwch(), "")]
         else:
             fd = sys.stdin.fileno()
             old = termios.tcgetattr(fd)
             try:
                 tty.setraw(fd)
-                # One read returns a whole escape sequence or a lone Esc
-                ch = os.read(fd, 8).decode(errors="replace")
+                # One read takes all waiting input, lone Esc included
+                ch = os.read(fd, 64).decode(errors="replace")
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        if ch == CTRL_C:
+        keys = KEY_SPLIT.findall(ch)
+        if CTRL_C in keys:
             raise KeyboardInterrupt
-        return KEY_NAMES.get(ch, ch)
+        return [KEY_NAMES.get(k, k) for k in keys]
 
     @staticmethod
     def ask_yn(prompt: str, default: bool = False) -> bool:
@@ -287,23 +289,23 @@ class CLI:
             while True:
                 sys.stdout.write(_render())
                 sys.stdout.flush()
-                key = CLI._read_key()
-                if key in ("left", "right", "y", "n"):
-                    if key == "y":
-                        sel = 0
-                    elif key == "n":
+                for key in CLI._read_keys():
+                    if key in ("left", "right", "y", "n"):
+                        if key == "y":
+                            sel = 0
+                        elif key == "n":
+                            sel = 1
+                        else:
+                            sel = 1 - sel
+                    elif key == "enter":
+                        sys.stdout.write(_render() + "\n")
+                        sys.stdout.flush()
+                        return sel == 0
+                    elif key == "esc":
                         sel = 1
-                    else:
-                        sel = 1 - sel
-                elif key == "enter":
-                    sys.stdout.write(_render() + "\n")
-                    sys.stdout.flush()
-                    return sel == 0
-                elif key == "esc":
-                    sel = 1
-                    sys.stdout.write(_render() + "\n")
-                    sys.stdout.flush()
-                    return False
+                        sys.stdout.write(_render() + "\n")
+                        sys.stdout.flush()
+                        return False
         finally:
             sys.stdout.write(CLI.SHOW_CUR)
             sys.stdout.flush()

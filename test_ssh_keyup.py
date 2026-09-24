@@ -146,22 +146,26 @@ class TestReadKey:
         monkeypatch.setattr(ssh_keyup.os, "read", fake_read)
         return reads
 
-    @pytest.mark.parametrize("data, key", [
-        (b"\x1b", "esc"),
-        (b"\x1b[D", "left"),
-        (b"\x1b[C", "right"),
-        (b"\r", "enter"),
-        (b"y", "y"),
+    @pytest.mark.parametrize("data, keys", [
+        (b"\x1b", ["esc"]),
+        (b"\x1b[D", ["left"]),
+        (b"\x1b[C", ["right"]),
+        (b"\r", ["enter"]),
+        (b"y", ["y"]),
+        (b"n\r", ["n", "enter"]),
+        (b"\x1b[D\r", ["left", "enter"]),
+        (b"\x1by", ["esc", "y"]),
     ])
-    def test_one_read_per_key(self, monkeypatch, data, key):
+    def test_one_read_splits_keys(self, monkeypatch, data, keys):
         reads = self._feed(monkeypatch, data)
-        assert ssh_keyup.CLI._read_key() == key
+        assert ssh_keyup.CLI._read_keys() == keys
         assert len(reads) == 1
 
-    def test_ctrl_c_interrupts(self, monkeypatch):
-        self._feed(monkeypatch, b"\x03")
+    @pytest.mark.parametrize("data", [b"\x03", b"y\x03"])
+    def test_ctrl_c_interrupts(self, monkeypatch, data):
+        self._feed(monkeypatch, data)
         with pytest.raises(KeyboardInterrupt):
-            ssh_keyup.CLI._read_key()
+            ssh_keyup.CLI._read_keys()
 
 
 SAMPLE_CONFIG = """# hand-written entry

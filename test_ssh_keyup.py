@@ -351,53 +351,40 @@ port 2222
 """
 
 
-class TestResolveSSHTarget:
+class TestResolveHost:
     def test_reads_hostname_and_port(self):
         runner = FakeRunner(out=SSH_G_OUTPUT)
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
+        assert ssh_keyup.resolve_host(runner, "mypi") == \
             ("192.168.1.23", 2222)
 
     def test_defaults_port_when_absent(self):
         runner = FakeRunner(out="hostname 10.0.0.5\n")
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
-            ("10.0.0.5", 22)
+        assert ssh_keyup.resolve_host(runner, "mypi") == ("10.0.0.5", 22)
 
     def test_ignores_unparsable_port(self):
         runner = FakeRunner(out="hostname 10.0.0.5\nport auto\n")
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi") == \
-            ("10.0.0.5", 22)
-
-    def test_none_when_ssh_fails(self):
-        runner = FakeRunner(rc=255)
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi") is None
-
-    def test_none_without_hostname(self):
-        runner = FakeRunner(out="user pi\nport 22\n")
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi") is None
+        assert ssh_keyup.resolve_host(runner, "mypi") == ("10.0.0.5", 22)
 
     def test_passes_explicit_port_to_ssh(self):
         runner = FakeRunner(out="hostname 10.0.0.5\nport 2200\n")
-        assert ssh_keyup.resolve_ssh_target(runner, "mypi", 2200) == \
+        assert ssh_keyup.resolve_host(runner, "mypi", 2200) == \
             ("10.0.0.5", 2200)
         cmd = runner.cmds[0]
         assert cmd[cmd.index("-p") + 1] == "2200"
 
     def test_omits_port_flag_without_explicit_port(self):
         runner = FakeRunner(out="hostname 10.0.0.5\n")
-        ssh_keyup.resolve_ssh_target(runner, "mypi")
+        ssh_keyup.resolve_host(runner, "mypi")
         assert "-p" not in runner.cmds[0]
-
-
-class TestResolveHost:
-    def test_substitutes_alias_target(self):
-        runner = FakeRunner(out=SSH_G_OUTPUT)
-        assert ssh_keyup.resolve_host(runner, "mypi") == \
-            ("192.168.1.23", 2222)
 
     def test_falls_back_to_typed_host(self):
         runner = FakeRunner(rc=255)
         assert ssh_keyup.resolve_host(runner, "rpi-5.local") == \
             ("rpi-5.local", 22)
+
+    def test_falls_back_without_hostname(self):
+        runner = FakeRunner(out="user pi\nport 2222\n")
+        assert ssh_keyup.resolve_host(runner, "mypi") == ("mypi", 22)
 
     def test_falls_back_to_explicit_port(self):
         runner = FakeRunner(rc=255)

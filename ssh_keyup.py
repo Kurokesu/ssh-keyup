@@ -846,22 +846,20 @@ def probe_port(host: str, port: int) -> tuple[str, tuple[str, str] | None]:
         return "", (f"Cannot reach {host}.", str(ex))
 
 
-def resolve_ssh_target(
+def resolve_host(
     runner: Runner, host: str, port: int | None = None,
-) -> tuple[str, int] | None:
-    """Resolve host through ssh config, return effective (hostname, port).
+) -> tuple[str, int]:
+    """Resolve a typed host through ssh config to (hostname, port).
 
     Explicit port goes to ssh as -p, so command line beats config the
-    same way it does for ssh itself.
+    same way it does for ssh itself. Typed values stand if ssh -G fails.
     """
     cmd = ["ssh", "-G"]
     if port:
         cmd.extend(["-p", str(port)])
     rc, out = runner.run_stdout(cmd + [host], stderr=subprocess.DEVNULL)
-    if rc != 0:
-        return None
     hostname, found = None, None
-    for line in out.splitlines():
+    for line in out.splitlines() if rc == 0 else []:
         key, _, value = line.partition(" ")
         if key == "hostname":
             hostname = value.strip()
@@ -869,23 +867,11 @@ def resolve_ssh_target(
             with contextlib.suppress(ValueError):
                 found = int(value)
     if not hostname:
-        return None
-    return hostname, found or port or SSH_PORT
-
-
-def resolve_host(
-    runner: Runner, host: str, port: int | None = None,
-) -> tuple[str, int]:
-    """Resolve a typed host through ssh config to (hostname, port)."""
-    target = resolve_ssh_target(runner, host, port)
-    if not target:
         return host, port or SSH_PORT
-
-    rhost, rport = target
-    if rhost.lower() != host.lower():
+    if hostname.lower() != host.lower():
         # Alias stops resolving once its block is rewritten
-        cli.hint(f"'{host}' resolves to {rhost} via SSH config")
-    return rhost, rport
+        cli.hint(f"'{host}' resolves to {hostname} via SSH config")
+    return hostname, found or port or SSH_PORT
 
 
 def check_reachable(host: str, port: int = SSH_PORT) -> str:

@@ -49,9 +49,9 @@ Follow prompts, enter remote password once and you're done. Alias now works in a
 ssh mypi   # no password, ever again
 ```
 
-**VSCode:** [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) works out of the box. Press `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host** and pick your alias for a full IDE on the device, no password:
+**VS Code:** [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) works out of the box. Press `Ctrl+Shift+P`, select **Remote-SSH: Connect to Host** and pick your alias for a full IDE on the device, no password:
 
-![VSCode connecting to the mypi alias over Remote SSH without a password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/docs/demo-vscode.gif)
+![VS Code connecting to the mypi alias over Remote SSH without a password.](https://raw.githubusercontent.com/Kurokesu/ssh-keyup/main/docs/demo-vscode.gif)
 
 ## Usage
 
@@ -98,7 +98,7 @@ update ssh config   ~/.ssh/config
 - **Never touches your password**. Only the public key is piped over SSH and OpenSSH prompts for the password itself
 - **Separate key per device** (`~/.ssh/id_ed25519_<alias>`), Ed25519 by default or RSA with `--key-type rsa`
 - Deploys in a **single SSH session**, one password prompt total
-- Adds a named entry to `~/.ssh/config`, works instantly with `ssh <alias>` and VSCode Remote SSH
+- Adds a named entry to `~/.ssh/config`, works instantly with `ssh <alias>` and VS Code Remote SSH
 - Checks host is **reachable** first, so typos surface before keys exist
 - Detects **RouterOS** and imports the key its way
 - Recovers from **host key mismatches** and stale SSH config entries after a reflash

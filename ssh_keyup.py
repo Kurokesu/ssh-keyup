@@ -19,6 +19,7 @@ import ipaddress
 import os
 import re
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -41,6 +42,9 @@ CONNECT_TIMEOUT = 3.0
 BANNER_TIMEOUT = 1.0
 KEY_TYPES = ("ed25519", "rsa")
 RSA_BITS = 4096
+SIGNAL_EXIT_BASE = 128
+STD_OUTPUT_HANDLE = -11
+ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 
 
 class TargetOS(Enum):
@@ -140,10 +144,11 @@ class CLI:
             # Best effort, colors just stay off if this fails
             with contextlib.suppress(Exception):
                 k = ctypes.windll.kernel32
-                h = k.GetStdHandle(-11)
+                h = k.GetStdHandle(STD_OUTPUT_HANDLE)
                 m = ctypes.c_ulong()
                 k.GetConsoleMode(h, ctypes.byref(m))
-                k.SetConsoleMode(h, m.value | 0x0004)
+                k.SetConsoleMode(
+                    h, m.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
     @staticmethod
     def banner() -> None:
@@ -1183,7 +1188,7 @@ def main() -> None:
         sys.stdout.flush()
         cli.msg()
         cli.cancel()
-        sys.exit(130)
+        sys.exit(SIGNAL_EXIT_BASE + signal.SIGINT)
 
 
 if __name__ == "__main__":

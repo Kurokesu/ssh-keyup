@@ -710,7 +710,7 @@ class Deployer:
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
         shown = remote if port == SSH_PORT else f"{remote}:{port}"
-        cli.status(f"Deploying key to {shown} ...")
+        cli.status(f"Deploying key to '{shown}' ...")
 
         install_cmd, stdin = Deployer._install_command(target_os, user,
                                                        pub_key)
@@ -729,7 +729,7 @@ class Deployer:
             if not cli.ask_yn("Remove old host key and retry?"):
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
                 return None
-            cli.status(f"Removing old host key for {host} ...")
+            cli.status(f"Removing old host key for '{host}' ...")
             # Non-default ports are keyed as [host]:port in known_hosts
             known = host if port == SSH_PORT else f"[{host}]:{port}"
             runner.run(["ssh-keygen", "-R", known])
@@ -763,7 +763,7 @@ def sanitize_alias(name: str, quiet: bool = False) -> str:
         for c in name
     ) or "host"
     if not quiet and clean != name:
-        cli.hint(f"(sanitized to: {clean})")
+        cli.hint(f"(sanitized to: '{clean}')")
     return clean
 
 
@@ -827,13 +827,13 @@ def probe_port(host: str, port: int) -> tuple[str, tuple[str, str] | None]:
         return "", (f"Could not resolve hostname '{host}'.",
                     "Check spelling or use an IP address instead.")
     except ConnectionRefusedError:
-        return "", (f"Connection refused by {host} on port {port}.",
+        return "", (f"Connection refused by '{host}' on port {port}.",
                     "Host is up but no SSH server is listening.")
     except socket.timeout:
-        return "", (f"No response from {host} on port {port}.",
+        return "", (f"No response from '{host}' on port {port}.",
                     "Device may be off or on a different network.")
     except OSError as ex:
-        return "", (f"Cannot reach {host}.", str(ex))
+        return "", (f"Cannot reach '{host}'.", str(ex))
 
 
 def resolve_host(
@@ -860,7 +860,7 @@ def resolve_host(
         return host, port or SSH_PORT
     if hostname.lower() != host.lower():
         # Alias stops resolving once its block is rewritten
-        cli.hint(f"'{host}' resolves to {hostname} via SSH config")
+        cli.hint(f"'{host}' resolves to '{hostname}' via SSH config")
     return hostname, found or port or SSH_PORT
 
 

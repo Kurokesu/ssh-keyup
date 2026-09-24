@@ -398,7 +398,7 @@ class TestResolveHost:
     def test_hints_when_alias_differs(self, capsys):
         runner = FakeRunner(out=SSH_G_OUTPUT)
         ssh_keyup.resolve_host(runner, "mypi")
-        assert "resolves to 192.168.1.23" in capsys.readouterr().out
+        assert "resolves to '192.168.1.23'" in capsys.readouterr().out
 
     def test_quiet_when_host_matches(self, capsys):
         runner = FakeRunner(out="hostname RPI-5\n")

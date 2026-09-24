@@ -408,15 +408,19 @@ class TestResolveHost:
 
 class TestGatherInput:
     @staticmethod
-    def _gather(monkeypatch, argv, banner=""):
+    def _gather(monkeypatch, argv, banner="", resolved=None):
         seen = {}
 
         def fake_resolve(runner, host, port=None):
             seen["host"], seen["port"] = host, port
-            return host, port or 22
+            return resolved or host, port or 22
+
+        def fake_check(host, port, fallback=None):
+            seen["fallback"] = fallback
+            return (*(fallback or (host, port)), banner)
 
         monkeypatch.setattr(ssh_keyup, "resolve_host", fake_resolve)
-        monkeypatch.setattr(ssh_keyup, "check_reachable", lambda h, p: banner)
+        monkeypatch.setattr(ssh_keyup, "check_reachable", fake_check)
         monkeypatch.setattr("builtins.input", lambda *_: "")
         result = ssh_keyup.gather_input(parse(argv), FakeRunner())
         return result, seen
@@ -425,7 +429,7 @@ class TestGatherInput:
         (host, _, _, port, _), seen = self._gather(
             monkeypatch, ["pi@10.0.0.5:2222", "mypi"])
         assert (host, port) == ("10.0.0.5", 2222)
-        assert seen == {"host": "10.0.0.5", "port": 2222}
+        assert (seen["host"], seen["port"]) == ("10.0.0.5", 2222)
 
     def test_port_from_flag(self, monkeypatch):
         (host, _, _, port, _), _ = self._gather(
@@ -469,6 +473,22 @@ class TestGatherInput:
         (_, _, alias, _, _), _ = self._gather(
             monkeypatch, ["pi@rpi-5.local:2222"])
         assert alias == "rpi-5"
+
+    @pytest.mark.parametrize("target, fallback", [
+        ("pi@testpi", ("testpi", 22)),
+        ("pi@testpi:2222", ("testpi", 2222)),
+    ])
+    def test_substituted_host_falls_back_to_typed(self, monkeypatch,
+                                                  target, fallback):
+        (host, _, _, port, _), seen = self._gather(
+            monkeypatch, [target, "testpi"], resolved="raspberrypi")
+        assert seen["fallback"] == fallback
+        assert (host, port) == fallback
+
+    def test_no_fallback_when_names_match(self, monkeypatch):
+        _, seen = self._gather(monkeypatch, ["pi@rpi-5", "mypi"],
+                               resolved="RPI-5")
+        assert seen["fallback"] is None
 
     def test_explicit_alias_wins(self, monkeypatch):
         (_, _, alias, _, _), _ = self._gather(
@@ -970,17 +990,62 @@ class TestProbePort:
 
 
 class TestCheckReachable:
+    BANNER = "SSH-2.0-OpenSSH_9.2"
+
+    @staticmethod
+    def _probe(monkeypatch, reachable):
+        probed = []
+
+        def fake_probe(host, port):
+            probed.append((host, port))
+            if host in reachable:
+                return TestCheckReachable.BANNER, None
+            return "", (f"Could not resolve hostname '{host}'", "detail")
+
+        monkeypatch.setattr(ssh_keyup, "probe_port", fake_probe)
+        return probed
+
     def test_reports_ok_and_returns_banner(self, monkeypatch, capsys):
-        monkeypatch.setattr(ssh_keyup, "probe_port",
-                            lambda h, p: ("SSH-2.0-OpenSSH_9.2", None))
-        assert ssh_keyup.check_reachable("rpi") == "SSH-2.0-OpenSSH_9.2"
+        self._probe(monkeypatch, {"rpi"})
+        assert ssh_keyup.check_reachable("rpi") == ("rpi", 22, self.BANNER)
         assert "ok" in capsys.readouterr().out
 
     def test_continues_when_user_accepts(self, monkeypatch):
-        monkeypatch.setattr(ssh_keyup, "probe_port",
-                            lambda h, p: ("", ("no route", "detail")))
+        self._probe(monkeypatch, set())
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
-        assert ssh_keyup.check_reachable("rpi") == ""
+        assert ssh_keyup.check_reachable("rpi") == ("rpi", 22, "")
+
+    def test_no_fallback_probe_without_fallback(self, monkeypatch):
+        probed = self._probe(monkeypatch, set())
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        ssh_keyup.check_reachable("rpi")
+        assert probed == [("rpi", 22)]
+
+    def test_falls_back_to_typed_name(self, monkeypatch, capsys):
+        probed = self._probe(monkeypatch, {"testpi"})
+        result = ssh_keyup.check_reachable(
+            "raspberrypi", 22, fallback=("testpi", 22))
+        assert result == ("testpi", 22, self.BANNER)
+        assert probed == [("raspberrypi", 22), ("testpi", 22)]
+        out = capsys.readouterr().out
+        assert "Trying 'testpi' as hostname" in out
+        assert "Warning" not in out
+
+    def test_fallback_shows_custom_port(self, monkeypatch, capsys):
+        self._probe(monkeypatch, {"testpi"})
+        ssh_keyup.check_reachable("raspberrypi", 22,
+                                  fallback=("testpi", 2222))
+        assert "Trying 'testpi:2222' as hostname" in capsys.readouterr().out
+
+    def test_both_fail_warns_about_config_target(self, monkeypatch, capsys):
+        self._probe(monkeypatch, set())
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        result = ssh_keyup.check_reachable(
+            "raspberrypi", 22, fallback=("testpi", 22))
+        assert result == ("raspberrypi", 22, "")
+        out = capsys.readouterr().out
+        assert "hostname 'raspberrypi'" in out
+        assert "hostname 'testpi'" not in out
 
     def test_exits_when_user_declines(self, monkeypatch):
         monkeypatch.setattr(ssh_keyup, "probe_port",

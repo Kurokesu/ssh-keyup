@@ -122,6 +122,48 @@ class TestIsIp:
         assert ssh_keyup.is_ip(value) is expected
 
 
+class FakeStdin:
+    def fileno(self):
+        return 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX terminal only")
+class TestReadKey:
+    @pytest.fixture(autouse=True)
+    def raw_tty(self, monkeypatch):
+        monkeypatch.setattr(sys, "stdin", FakeStdin())
+        monkeypatch.setattr(ssh_keyup.termios, "tcgetattr", lambda fd: [])
+        monkeypatch.setattr(ssh_keyup.termios, "tcsetattr", lambda *a: None)
+        monkeypatch.setattr(ssh_keyup.tty, "setraw", lambda fd: None)
+
+    def _feed(self, monkeypatch, data):
+        reads = []
+
+        def fake_read(fd, n):
+            reads.append(n)
+            return data
+
+        monkeypatch.setattr(ssh_keyup.os, "read", fake_read)
+        return reads
+
+    @pytest.mark.parametrize("data, key", [
+        (b"\x1b", "esc"),
+        (b"\x1b[D", "left"),
+        (b"\x1b[C", "right"),
+        (b"\r", "enter"),
+        (b"y", "y"),
+    ])
+    def test_one_read_per_key(self, monkeypatch, data, key):
+        reads = self._feed(monkeypatch, data)
+        assert ssh_keyup.CLI._read_key() == key
+        assert len(reads) == 1
+
+    def test_ctrl_c_interrupts(self, monkeypatch):
+        self._feed(monkeypatch, b"\x03")
+        with pytest.raises(KeyboardInterrupt):
+            ssh_keyup.CLI._read_key()
+
+
 SAMPLE_CONFIG = """# hand-written entry
 Host manual
     HostName 10.0.0.1

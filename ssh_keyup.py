@@ -867,25 +867,39 @@ def resolve_host(
     return hostname, found or port or SSH_PORT
 
 
-def check_reachable(host: str, port: int = SSH_PORT) -> str:
-    """Probe SSH port and return its banner.
+def check_reachable(
+    host: str, port: int = SSH_PORT,
+    fallback: tuple[str, int] | None = None,
+) -> tuple[str, int, str]:
+    """Probe SSH port, return (host, port, banner) of whichever answers.
 
+    Fallback is the typed name, tried when its SSH config target fails.
     On failure explain why and offer to continue, banner is then empty.
     """
     cli.status("Checking connection ... ", end="")
     banner, failure = probe_port(host, port)
     if failure is None:
         cli.ok()
-        return banner
-
+        return host, port, banner
     cli.failed()
+
+    if fallback:
+        fb_host, fb_port = fallback
+        shown = fb_host if fb_port == SSH_PORT else f"{fb_host}:{fb_port}"
+        cli.status(f"Trying '{shown}' as hostname ... ", end="")
+        banner, fb_failure = probe_port(fb_host, fb_port)
+        if fb_failure is None:
+            cli.ok()
+            return fb_host, fb_port, banner
+        cli.failed()
+
     cli.warn(failure[0])
     cli.hint(f"  {failure[1]}")
     cli.msg()
     if not cli.ask_yn("Continue anyway?"):
         cli.cancel()
         sys.exit(0)
-    return ""
+    return host, port, ""
 
 
 _DESCRIPTION = (
@@ -986,8 +1000,11 @@ def gather_input(
     if typed_port and args.port and typed_port != args.port:
         cli.fatal("Port given both in host and as --port")
 
-    host, port = resolve_host(runner, typed, typed_port or args.port)
-    banner = check_reachable(host, port)
+    explicit_port = typed_port or args.port
+    host, port = resolve_host(runner, typed, explicit_port)
+    fallback = ((typed, explicit_port or SSH_PORT)
+                if host.lower() != typed.lower() else None)
+    host, port, banner = check_reachable(host, port, fallback)
     if args.os:
         target_os = TargetOS(args.os)
     else:

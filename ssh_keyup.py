@@ -926,8 +926,9 @@ def check_reachable(host: str, port: int = SSH_PORT) -> str:
 
 _DESCRIPTION = (
     "Set up SSH key auth in one command.\n"
-    "Generates a per-host Ed25519 key pair, deploys it\n"
-    "to the remote host and adds an entry to ~/.ssh/config."
+    "Generates a per-host Ed25519 or RSA key pair,\n"
+    "deploys it to the remote host and adds an entry\n"
+    "to ~/.ssh/config."
 )
 
 _EXAMPLES = [

@@ -139,29 +139,45 @@ class TestPending:
         monkeypatch.setattr(ssh_keyup, "DOT_PERIOD", 0.01)
 
     def test_static_without_terminal(self, capsys):
-        threads = threading.active_count()
-        with ssh_keyup.cli.pending("Checking"):
-            assert threading.active_count() == threads
+        assert ssh_keyup.cli.pending("Checking", lambda: 42) == 42
         assert capsys.readouterr().out == "Checking ... "
+
+    def test_passes_arguments(self, capsys):
+        assert ssh_keyup.cli.pending("Checking", max, 3, 7) == 7
 
     def test_animates_then_leaves_static_line(self, monkeypatch, capsys):
         self._tty(monkeypatch)
         threads = threading.active_count()
-        with ssh_keyup.cli.pending("Checking"):
-            time.sleep(0.1)
+        assert ssh_keyup.cli.pending("Checking", time.sleep, 0.1) is None
         out = capsys.readouterr().out
         assert out.startswith("Checking ")
         assert out.count("...\b\b\b") > 2
         assert out.endswith("... ")
         assert threading.active_count() == threads
 
-    def test_error_in_body_stops_animation(self, monkeypatch, capsys):
+    def test_error_in_work_propagates(self, monkeypatch, capsys):
         self._tty(monkeypatch)
-        threads = threading.active_count()
-        with pytest.raises(RuntimeError), ssh_keyup.cli.pending("Checking"):
-            raise RuntimeError
+
+        def boom():
+            raise UnicodeError("label too long")
+
+        with pytest.raises(UnicodeError):
+            ssh_keyup.cli.pending("Checking", boom)
         assert capsys.readouterr().out.endswith("... ")
-        assert threading.active_count() == threads
+
+    def test_interrupt_stops_waiting(self, monkeypatch, capsys):
+        self._tty(monkeypatch)
+        joins = []
+
+        def interrupted_join(self, timeout=None):
+            joins.append(timeout)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(threading.Thread, "join", interrupted_join)
+        with pytest.raises(KeyboardInterrupt):
+            ssh_keyup.cli.pending("Checking", time.sleep, 1)
+        assert joins == [0.01]
+        assert capsys.readouterr().out.endswith("Checking ... ")
 
 
 class TestAskYn:

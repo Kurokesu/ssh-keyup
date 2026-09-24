@@ -16,7 +16,6 @@ import base64
 import contextlib
 import hashlib
 import ipaddress
-import itertools
 import os
 import re
 import shlex
@@ -26,11 +25,12 @@ import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from shutil import which
+from typing import TypeVar
 
 if sys.platform == "win32":
     import ctypes
@@ -38,6 +38,8 @@ if sys.platform == "win32":
 else:
     import termios
     import tty
+
+T = TypeVar("T")
 
 SSH_PORT = 22
 MAX_PORT = 65535
@@ -199,35 +201,43 @@ class CLI:
         print(f"{CLI.S_STATUS}{msg}{CLI.RESET}", end=end, flush=True)
 
     @staticmethod
-    @contextlib.contextmanager
-    def pending(msg: str) -> Iterator[None]:
-        """Animate msg's dots while the body runs, ok() or failed() ends it."""
+    def pending(msg: str, work: Callable[..., T], *args: object) -> T:
+        """Animate msg's dots while work runs, ok() or failed() ends it."""
         CLI.status(f"{msg} ", end="")
-        done = threading.Event()
+        box: list = []
 
-        def animate() -> None:
-            for lit in itertools.cycle(range(3)):
-                dots = "".join(f"{CLI.S_STATUS}{'' if i == lit else CLI.S_MUTED}."
-                               f"{CLI.RESET}" for i in range(3))
-                sys.stdout.write(f"{dots}\b\b\b")
-                sys.stdout.flush()
-                if done.wait(DOT_PERIOD):
-                    return
+        def run() -> None:
+            try:
+                box.append(work(*args))
+            except Exception as ex:  # noqa: BLE001, re-raised below
+                box.append(ex)
 
-        thread = threading.Thread(target=animate, daemon=True)
-        if sys.stdout.isatty():
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        animate = sys.stdout.isatty()
+        if animate:
             sys.stdout.write(CLI.HIDE_CUR)
-            thread.start()
         try:
-            yield
+            lit = 0
+            while worker.is_alive():
+                if animate:
+                    dots = "".join(
+                        f"{CLI.S_STATUS}{'' if i == lit else CLI.S_MUTED}."
+                        f"{CLI.RESET}" for i in range(3))
+                    sys.stdout.write(f"{dots}\b\b\b")
+                    sys.stdout.flush()
+                # Short waits let Ctrl+C land while work blocks in a lookup
+                worker.join(DOT_PERIOD)
+                lit = (lit + 1) % 3
         finally:
-            done.set()
-            if thread.is_alive():
-                thread.join()
+            if animate:
                 # Redraw from line start, a ^C echo may sit on the dots
                 sys.stdout.write(f"\r{CLI.CLEAR_LINE}{CLI.SHOW_CUR}")
                 CLI.status(f"{msg} ", end="")
             CLI.status("... ", end="")
+        if isinstance(box[0], Exception):
+            raise box[0]
+        return box[0]
 
     @staticmethod
     def ok(msg: str = "ok") -> None:
@@ -911,8 +921,8 @@ def check_reachable(
     Fallback is the typed name, tried when its SSH config target fails.
     On failure explain why and offer to continue, banner is then empty.
     """
-    with cli.pending("Checking connection"):
-        banner, failure = probe_port(host, port)
+    banner, failure = cli.pending("Checking connection", probe_port,
+                                  host, port)
     if failure is None:
         cli.ok()
         return host, port, banner
@@ -921,8 +931,8 @@ def check_reachable(
     if fallback:
         fb_host, fb_port = fallback
         shown = fb_host if fb_port == SSH_PORT else f"{fb_host}:{fb_port}"
-        with cli.pending(f"Trying '{shown}' as hostname"):
-            banner, fb_failure = probe_port(fb_host, fb_port)
+        banner, fb_failure = cli.pending(f"Trying '{shown}' as hostname",
+                                         probe_port, fb_host, fb_port)
         if fb_failure is None:
             cli.ok()
             return fb_host, fb_port, banner

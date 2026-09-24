@@ -107,37 +107,31 @@ class CLI:
                               |___/      |_|"""
 
     WIDTH = 48
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    RESET = "\033[0m"
-    GREEN = "\033[32m"
-    RED = "\033[31m"
-    YELLOW = "\033[33m"
-    CYAN = "\033[36m"
-    HIDE_CUR = "\033[?25l"
-    SHOW_CUR = "\033[?25h"
+    BOLD = "\x1b[1m"
+    DIM = "\x1b[2m"
+    RESET = "\x1b[0m"
+    GREEN = "\x1b[32m"
+    RED = "\x1b[31m"
+    YELLOW = "\x1b[33m"
+    CYAN = "\x1b[36m"
+    HIDE_CUR = "\x1b[?25l"
+    SHOW_CUR = "\x1b[?25h"
+    CLEAR_LINE = "\x1b[2K"
 
-    S_BANNER = ""
     S_VERSION = CYAN + BOLD
-    S_SEPARATOR = DIM
-    S_HINT = DIM
-    S_SSH_WARNING = YELLOW
-    S_SSH_INFO = DIM
-    S_SUCCESS = GREEN
     S_STATUS = CYAN
+    S_MUTED = DIM
+    S_SUCCESS = GREEN
+    S_WARN = YELLOW
     S_FAIL = RED
-
-    STYLE_ATTRS = (
-        "BOLD", "DIM", "RESET", "GREEN", "RED", "YELLOW", "CYAN",
-        "HIDE_CUR", "SHOW_CUR", "S_BANNER", "S_VERSION", "S_SEPARATOR",
-        "S_HINT", "S_SSH_WARNING", "S_SSH_INFO", "S_SUCCESS", "S_STATUS",
-        "S_FAIL",
-    )
+    S_YES = GREEN + BOLD
+    S_NO = RED + BOLD
 
     def __init__(self) -> None:
         if not sys.stdout.isatty():
-            for attr in CLI.STYLE_ATTRS:
-                setattr(CLI, attr, "")
+            for attr, value in list(vars(CLI).items()):
+                if isinstance(value, str) and value.startswith(ESC):
+                    setattr(CLI, attr, "")
 
     @staticmethod
     def enable_ansi() -> None:
@@ -154,30 +148,30 @@ class CLI:
     @staticmethod
     def banner() -> None:
         """Print the ASCII banner and version."""
-        print(f"{CLI.S_BANNER}{CLI.BANNER}{CLI.RESET}")
+        print(CLI.BANNER)
         ver = ("v" + __version__).rjust(CLI.WIDTH)
         print(f"{CLI.S_VERSION}{ver}{CLI.RESET}")
 
     @staticmethod
     def separator() -> None:
         """Print a horizontal separator line."""
-        print(f"\n{CLI.S_SEPARATOR}{'-' * CLI.WIDTH}{CLI.RESET}\n")
+        print(f"\n{CLI.S_MUTED}{'-' * CLI.WIDTH}{CLI.RESET}\n")
 
     @staticmethod
     def hint(msg: str) -> None:
         """Print a hint/informational message."""
-        print(f"{CLI.S_HINT}{msg}{CLI.RESET}")
+        print(f"{CLI.S_MUTED}{msg}{CLI.RESET}")
 
     @staticmethod
     def warn(msg: str) -> None:
         """Print a warning message, pip-style."""
-        print(f"{CLI.YELLOW}Warning:{CLI.RESET} {msg}")
+        print(f"{CLI.S_WARN}Warning:{CLI.RESET} {msg}")
 
     @staticmethod
     def fail(msg: str) -> None:
         """Print an error message, pip-style."""
         nl = "\n" if msg.startswith("\n") else ""
-        print(f"{nl}{CLI.RED}Error:{CLI.RESET} {msg.lstrip()}")
+        print(f"{nl}{CLI.S_FAIL}Error:{CLI.RESET} {msg.lstrip()}")
 
     @staticmethod
     def fatal(msg: str) -> None:
@@ -208,7 +202,7 @@ class CLI:
     @staticmethod
     def cancel(msg: str = "") -> None:
         """Print a cancellation message."""
-        print(f"{CLI.YELLOW}Cancelled.{CLI.RESET}", end="")
+        print(f"{CLI.S_WARN}Cancelled.{CLI.RESET}", end="")
         if msg:
             print(f" {msg}")
         else:
@@ -217,12 +211,12 @@ class CLI:
     @staticmethod
     def ssh_warning(msg: str) -> None:
         """Print an SSH warning line."""
-        print(f"{CLI.S_SSH_WARNING}{msg}{CLI.RESET}")
+        print(f"{CLI.S_WARN}{msg}{CLI.RESET}")
 
     @staticmethod
     def ssh_info(msg: str) -> None:
         """Print an SSH info/detail line."""
-        print(f"  {CLI.S_SSH_INFO}{msg}{CLI.RESET}")
+        print(f"  {CLI.S_MUTED}{msg}{CLI.RESET}")
 
     @staticmethod
     def prompt(
@@ -234,9 +228,9 @@ class CLI:
             print(f"{label}: {value}")
             return value
         if default:
-            suffix = f" [{CLI.CYAN}{default}{CLI.RESET}]"
+            suffix = f" [{CLI.S_STATUS}{default}{CLI.RESET}]"
         elif hint:
-            suffix = f" {CLI.S_HINT}({hint}){CLI.RESET}"
+            suffix = f" {CLI.S_MUTED}({hint}){CLI.RESET}"
         else:
             suffix = ""
         result = input(f"{label}{suffix}: ").strip()
@@ -277,11 +271,10 @@ class CLI:
         sel = 0 if default else 1
 
         def _render() -> str:
-            yes = (f"{CLI.GREEN}{CLI.BOLD}[ Yes ]{CLI.RESET}" if sel == 0
-                   else f"{CLI.DIM}  Yes  {CLI.RESET}")
-            no = (f"{CLI.RED}{CLI.BOLD}[ No ]{CLI.RESET}" if sel == 1
-                  else f"{CLI.DIM}  No  {CLI.RESET}")
-            return f"\r\033[2K{prompt}  {yes}  {no}"
+            yes = f"{CLI.S_MUTED}  Yes  " if sel else f"{CLI.S_YES}[ Yes ]"
+            no = f"{CLI.S_NO}[ No ]" if sel else f"{CLI.S_MUTED}  No  "
+            return (f"\r{CLI.CLEAR_LINE}{prompt}  "
+                    f"{yes}{CLI.RESET}  {no}{CLI.RESET}")
 
         sys.stdout.write(CLI.HIDE_CUR)
         sys.stdout.flush()

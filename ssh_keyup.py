@@ -996,16 +996,11 @@ def gather_input(
     if not user:
         cli.fatal("No username provided.")
 
-    if args.alias:
-        alias = cli.prompt("Alias", args.alias)
-    elif is_ip(typed):
-        alias = cli.prompt("Alias")
-        if not alias:
-            cli.fatal("No alias provided.")
-    else:
-        raw = typed[:-6] if typed.endswith(".local") else typed
-        alias = cli.prompt("Alias", default=sanitize_alias(raw, quiet=True))
-
+    default = ("" if is_ip(typed) else
+               sanitize_alias(re.sub(r"\.local$", "", typed), quiet=True))
+    alias = cli.prompt("Alias", args.alias, default=default)
+    if not alias:
+        cli.fatal("No alias provided.")
     alias = sanitize_alias(alias)
 
     return host, user, alias, port, target_os

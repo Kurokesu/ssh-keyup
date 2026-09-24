@@ -448,7 +448,7 @@ class SSHConfig:
 
         if has_unmanaged:
             cli.fail(f"Host '{alias}' already exists in SSH config "
-                     "(not managed by ssh-keyup).")
+                     "(not managed by ssh-keyup)")
             cli.msg(f"Use a different alias or remove the existing entry "
                     f"from {ssh_config}")
             sys.exit(1)
@@ -458,7 +458,7 @@ class SSHConfig:
 
         msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
         if not cli.ask_yn(msg):
-            cli.cancel("No changes were made.")
+            cli.cancel("No changes were made")
             sys.exit(0)
 
         return SSHConfig._splice_out(text, blocks[alias]), True
@@ -484,7 +484,7 @@ class SSHConfig:
         """Print managed entries as aligned columns."""
         entries = SSHConfig.collect_entries(SSHConfig._read(ssh_config))
         if not entries:
-            cli.msg("No entries managed by ssh-keyup.")
+            cli.msg("No entries managed by ssh-keyup")
             return
 
         header = ("alias", "host", "user", "key", "added")
@@ -502,7 +502,7 @@ class SSHConfig:
         text = SSHConfig._read(ssh_config)
         blocks = SSHConfig._find_managed_blocks(text)
         if alias not in blocks:
-            cli.fatal(f"No entry '{alias}' managed by ssh-keyup.")
+            cli.fatal(f"No entry '{alias}' managed by ssh-keyup")
 
         start, end = blocks[alias]
         key = SSHConfig._field(text[start:end], "IdentityFile")
@@ -626,9 +626,9 @@ class Deployer:
         """Explain failed deploy, a remote error is not a login error."""
         cli.msg()
         if Deployer._is_authenticated(stderr):
-            cli.fail("Logged in, but install command failed on device.")
+            cli.fail("Logged in, but install command failed on device")
         else:
-            cli.fail("SSH connection failed. Check host and credentials.")
+            cli.fail("SSH connection failed. Check host and credentials")
         for line in Deployer._error_lines(stderr):
             cli.hint(f"  {line}")
         if target_os is not TargetOS.ROUTEROS:
@@ -636,10 +636,10 @@ class Deployer:
         if "unable to load key" in stderr:
             # Only Ed25519 has a version floor, RSA loads on any RouterOS 7
             if pub_key.startswith("ssh-ed25519"):
-                cli.hint("Ed25519 keys need RouterOS 7.12 or newer.")
+                cli.hint("Ed25519 keys need RouterOS 7.12 or newer")
         elif "not enough permissions" in stderr:
             cli.hint("User needs the policy permission, "
-                     "the full group has it.")
+                     "the full group has it")
 
     @staticmethod
     def _succeeded(rc: int, output: str, target_os: TargetOS) -> bool:
@@ -789,7 +789,7 @@ def split_host_port(host: str) -> tuple[str, int | None]:
     if host.startswith("["):
         inner, sep, rest = host[1:].partition("]")
         if not sep or (rest and not rest.startswith(":")):
-            raise ValueError(f"Invalid host '{host}'.")
+            raise ValueError(f"Invalid host '{host}'")
         if not rest:
             return inner, None
         host, port_text = inner, rest[1:]
@@ -798,7 +798,7 @@ def split_host_port(host: str) -> tuple[str, int | None]:
     else:
         return host, None
     if not port_text.isdigit() or not 1 <= int(port_text) <= MAX_PORT:
-        raise ValueError(f"Invalid port '{port_text}'.")
+        raise ValueError(f"Invalid port '{port_text}'")
     return host, int(port_text)
 
 
@@ -824,16 +824,16 @@ def probe_port(host: str, port: int) -> tuple[str, tuple[str, str] | None]:
         with socket.create_connection((host, port), CONNECT_TIMEOUT) as sock:
             return read_banner(sock), None
     except socket.gaierror:
-        return "", (f"Could not resolve hostname '{host}'.",
-                    "Check spelling or use an IP address instead.")
+        return "", (f"Could not resolve hostname '{host}'",
+                    "Check spelling or use an IP address instead")
     except ConnectionRefusedError:
-        return "", (f"Connection refused by '{host}' on port {port}.",
-                    "Host is up but no SSH server is listening.")
+        return "", (f"Connection refused by '{host}' on port {port}",
+                    "Host is up but no SSH server is listening")
     except socket.timeout:
-        return "", (f"No response from '{host}' on port {port}.",
-                    "Device may be off or on a different network.")
+        return "", (f"No response from '{host}' on port {port}",
+                    "Device may be off or on a different network")
     except OSError as ex:
-        return "", (f"Cannot reach '{host}'.", str(ex))
+        return "", (f"Cannot reach '{host}'", str(ex))
 
 
 def resolve_host(
@@ -975,13 +975,13 @@ def gather_input(
     """Collect host, user, alias, port and target OS from args or prompts."""
     typed = cli.prompt("Remote host", args.host, hint="IP or name")
     if not typed:
-        cli.fatal("No host provided.")
+        cli.fatal("No host provided")
     try:
         typed, typed_port = split_host_port(typed)
     except ValueError as ex:
         cli.fatal(str(ex))
     if typed_port and args.port and typed_port != args.port:
-        cli.fatal("Port given both in host and as --port.")
+        cli.fatal("Port given both in host and as --port")
 
     host, port = resolve_host(runner, typed, typed_port or args.port)
     banner = check_reachable(host, port)
@@ -994,13 +994,13 @@ def gather_input(
 
     user = cli.prompt("Username", args.user)
     if not user:
-        cli.fatal("No username provided.")
+        cli.fatal("No username provided")
 
     default = ("" if is_ip(typed) else
                sanitize_alias(re.sub(r"\.local$", "", typed), quiet=True))
     alias = cli.prompt("Alias", args.alias, default=default)
     if not alias:
-        cli.fatal("No alias provided.")
+        cli.fatal("No alias provided")
     alias = sanitize_alias(alias)
 
     return host, user, alias, port, target_os
@@ -1023,7 +1023,7 @@ def generate_key(runner: Runner, key_path: Path, key_type: str) -> None:
         )
 
     if rc != 0:
-        cli.fatal("ssh-keygen failed.")
+        cli.fatal("ssh-keygen failed")
 
 
 def prune_other_type(ssh_dir: Path, file_alias: str, key_type: str) -> None:
@@ -1050,7 +1050,7 @@ def prune_other_type(ssh_dir: Path, file_alias: str, key_type: str) -> None:
 
 def discard_keys(key_path: Path, pub_path: Path) -> None:
     """Delete a key pair generated during a failed run."""
-    cli.status("Cleaning up generated key pair...")
+    cli.status("Cleaning up generated key pair ...")
     key_path.unlink(missing_ok=True)
     pub_path.unlink(missing_ok=True)
 
@@ -1132,10 +1132,10 @@ def main() -> None:
         prune_other_type(ssh_dir, file_alias, args.key_type)
 
         cli.separator()
-        cli.success(f"SSH key deployed for '{alias}'.")
+        cli.success(f"SSH key deployed for '{alias}'")
         if deployed is TargetOS.ROUTEROS:
             cli.hint(f"By default RouterOS turns off password SSH login for "
-                     f"{user} once a key exists (WinBox, WebFig unaffected).")
+                     f"{user} once a key exists (WinBox, WebFig unaffected)")
         cli.msg()
     except KeyboardInterrupt:
         sys.stdout.write(CLI.SHOW_CUR)

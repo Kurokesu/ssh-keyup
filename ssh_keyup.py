@@ -308,6 +308,10 @@ class CLI:
         """Interactive yes/no selector with arrow keys."""
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             return default
+        # Keys typed before the prompt appeared must not answer it
+        if sys.platform == "win32":
+            while msvcrt.kbhit():
+                msvcrt.getwch()
 
         sel = 0 if default else 1
 

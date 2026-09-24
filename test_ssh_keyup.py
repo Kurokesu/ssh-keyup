@@ -470,6 +470,16 @@ class TestGatherInput:
             monkeypatch, ["pi@rpi-5.local:2222"])
         assert alias == "rpi-5"
 
+    def test_explicit_alias_wins(self, monkeypatch):
+        (_, _, alias, _, _), _ = self._gather(
+            monkeypatch, ["pi@rpi-5.local", "mypi"])
+        assert alias == "mypi"
+
+    def test_ip_without_alias_exits(self, monkeypatch, capsys):
+        with pytest.raises(SystemExit):
+            self._gather(monkeypatch, ["pi@10.0.0.5"])
+        assert "No alias provided" in capsys.readouterr().out
+
 
 class TestBuildBlock:
     def test_omits_port_line_on_default(self):

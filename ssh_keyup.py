@@ -714,8 +714,12 @@ class Deployer:
 
         install_cmd, stdin = Deployer._install_command(target_os, user,
                                                        pub_key)
-        rc, stderr = Deployer._ssh_cmd(runner, remote, install_cmd, stdin,
-                                       port=port)
+
+        def attempt(accept_new: bool = False) -> tuple[int, str]:
+            return Deployer._ssh_cmd(runner, remote, install_cmd, stdin,
+                                     accept_new, port)
+
+        rc, stderr = attempt()
 
         if rc != 0 and Deployer._is_host_key_changed(stderr):
             for line in stderr.strip().splitlines():
@@ -729,15 +733,11 @@ class Deployer:
             # Non-default ports are keyed as [host]:port in known_hosts
             known = host if port == SSH_PORT else f"[{host}]:{port}"
             runner.run(["ssh-keygen", "-R", known])
-            rc, stderr = Deployer._ssh_cmd(
-                runner, remote, install_cmd, stdin, accept_new=True,
-                port=port)
+            rc, stderr = attempt(accept_new=True)
         elif rc != 0 and Deployer._is_unknown_host(stderr):
             if not Deployer._handle_unknown_host(host, stderr):
                 return None
-            rc, stderr = Deployer._ssh_cmd(
-                runner, remote, install_cmd, stdin, accept_new=True,
-                port=port)
+            rc, stderr = attempt(accept_new=True)
 
         # Banner read missed or skipped, ssh -v still names the remote
         if (rc != 0 and target_os is TargetOS.LINUX
@@ -748,9 +748,7 @@ class Deployer:
                 target_os = detected
                 install_cmd, stdin = Deployer._install_command(
                     target_os, user, pub_key)
-                rc, stderr = Deployer._ssh_cmd(
-                    runner, remote, install_cmd, stdin, accept_new=True,
-                    port=port)
+                rc, stderr = attempt(accept_new=True)
 
         if not Deployer._succeeded(rc, stderr, target_os):
             Deployer._report_failure(stderr, target_os, pub_key)

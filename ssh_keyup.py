@@ -279,22 +279,16 @@ class CLI:
                 sys.stdout.write(_render())
                 sys.stdout.flush()
                 for key in CLI._read_keys():
-                    if key in ("left", "right", "y", "n"):
-                        if key == "y":
-                            sel = 0
-                        elif key == "n":
+                    if key in ("left", "right"):
+                        sel = 1 - sel
+                    elif key in ("y", "n"):
+                        sel = 0 if key == "y" else 1
+                    elif key in ("enter", "esc"):
+                        if key == "esc":
                             sel = 1
-                        else:
-                            sel = 1 - sel
-                    elif key == "enter":
                         sys.stdout.write(_render() + "\n")
                         sys.stdout.flush()
                         return sel == 0
-                    elif key == "esc":
-                        sel = 1
-                        sys.stdout.write(_render() + "\n")
-                        sys.stdout.flush()
-                        return False
         finally:
             sys.stdout.write(CLI.SHOW_CUR)
             sys.stdout.flush()

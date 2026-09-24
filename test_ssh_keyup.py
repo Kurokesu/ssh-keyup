@@ -126,6 +126,28 @@ class FakeStdin:
     def fileno(self):
         return 0
 
+    def isatty(self):
+        return True
+
+
+class TestAskYn:
+    @pytest.mark.parametrize("reads, default, expected", [
+        ([["enter"]], True, True),
+        ([["enter"]], False, False),
+        ([["left"], ["enter"]], False, True),
+        ([["right"], ["right"], ["enter"]], True, True),
+        ([["y", "enter"]], False, True),
+        ([["n"], ["enter"]], True, False),
+        ([["esc"]], True, False),
+        ([["x", ""], ["enter"]], True, True),
+    ])
+    def test_answer(self, monkeypatch, reads, default, expected):
+        monkeypatch.setattr(sys, "stdin", FakeStdin())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        chunks = iter(reads)
+        monkeypatch.setattr(ssh_keyup.CLI, "_read_keys", lambda: next(chunks))
+        assert ssh_keyup.CLI.ask_yn("Q", default) is expected
+
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX terminal only")
 class TestReadKey:

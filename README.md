@@ -96,12 +96,12 @@ update ssh config   ~/.ssh/config
 
 - Works on **Windows OpenSSH**, where `ssh-copy-id` does not exist
 - **Never touches your password**. Only the public key is piped over SSH and OpenSSH prompts for the password itself
-- One **Ed25519** key per device (`~/.ssh/id_ed25519_<alias>`), not one key reused everywhere
+- **Separate key per device** (`~/.ssh/id_ed25519_<alias>`), Ed25519 by default or RSA with `--key-type rsa`
 - Deploys in a **single SSH session**, one password prompt total
 - Adds a named entry to `~/.ssh/config`, works instantly with `ssh <alias>` and VSCode Remote SSH
 - Checks host is **reachable** first, so typos surface before keys exist
 - Detects **RouterOS** and imports the key its way
-- Recovers from **host key mismatches** after a reflash
+- Recovers from **host key mismatches** and stale SSH config entries after a reflash
 - **Entry management**, list or retire devices without leaving stale keys behind
 - **Zero dependencies**, standard library plus system OpenSSH
 
@@ -127,7 +127,7 @@ Works once. Same key lands on every device, `~/.ssh` keeps default permissions t
 |---|:---:|:---:|
 | Works on Windows OpenSSH | yes | no |
 | Works with RouterOS | yes | no |
-| Ed25519 key per device | yes | no |
+| Separate key per device | yes | no |
 | Sets `authorized_keys` permissions | yes | yes |
 | Writes `~/.ssh/config` alias | yes | no |
 | Recovers from changed host key | yes | no |
@@ -155,7 +155,7 @@ No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `a
 
 ### What devices are supported?
 
-Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers. Any RouterOS 7.12 or newer device, MikroTik routers or CHR alike, is detected from SSH banner and gets its own key import, `--os routeros` forces it.
+Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs, servers. Any distribution works (Raspberry Pi OS, DietPi, Ubuntu and others). Any RouterOS 7.12 or newer device, MikroTik routers or CHR alike, is detected from SSH banner and gets its own key import, `--os routeros` forces it.
 
 ### Can I use an RSA key instead of Ed25519?
 

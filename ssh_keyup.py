@@ -1061,7 +1061,8 @@ def main() -> None:
         cli.enable_ansi()
         args = parse_args()
 
-        ssh_config = Path.home() / ".ssh" / "config"
+        ssh_dir = Path.home() / ".ssh"
+        ssh_config = ssh_dir / "config"
         if args.list:
             SSHConfig.list_entries(ssh_config)
             return
@@ -1080,8 +1081,6 @@ def main() -> None:
 
         cli.separator()
 
-        ssh_dir = Path.home() / ".ssh"
-        ssh_config = ssh_dir / "config"
         config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
 
         ssh_dir.mkdir(parents=True, exist_ok=True)
@@ -1090,17 +1089,15 @@ def main() -> None:
         key_path = ssh_dir / key_name
         pub_path = ssh_dir / f"{key_name}.pub"
 
-        key_generated = False
+        key_generated = True
         if pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
-            if cli.ask_yn("Regenerate key pair?"):
+            key_generated = cli.ask_yn("Regenerate key pair?")
+            if key_generated:
                 key_path.unlink(missing_ok=True)
                 pub_path.unlink()
-                generate_key(runner, key_path, args.key_type)
-                key_generated = True
-        else:
+        if key_generated:
             generate_key(runner, key_path, args.key_type)
-            key_generated = True
 
         cli.separator()
         # Remove stale entry now, otherwise deploy's ssh would resolve

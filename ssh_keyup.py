@@ -686,7 +686,7 @@ class Deployer:
             raise ValueError(f"unhandled target OS {target_os}")
 
     @staticmethod
-    def _ssh_cmd(runner: Runner, remote: str, install_cmd: str,
+    def _ssh_cmd(runner: Runner, user: str, host: str, install_cmd: str,
                  stdin: bytes, accept_new: bool = False,
                  port: int = SSH_PORT) -> tuple[int, str]:
         """Run SSH deploy command, verbose so failures can be explained."""
@@ -694,8 +694,11 @@ class Deployer:
         cmd = ["ssh", "-v"]
         if port != SSH_PORT:
             cmd.extend(["-p", str(port)])
-        cmd.extend(["-o", f"StrictHostKeyChecking={policy}",
-                    remote, install_cmd])
+        # Connect to probed host even when its name is also a config alias
+        hostname = host.replace("%", "%%")  # HostName expands % tokens
+        cmd.extend(["-o", f"HostName={hostname}",
+                    "-o", f"StrictHostKeyChecking={policy}",
+                    f"{user}@{host}", install_cmd])
         return runner.run_capture(cmd, input=stdin)
 
     @staticmethod
@@ -716,7 +719,7 @@ class Deployer:
                                                        pub_key)
 
         def attempt(accept_new: bool = False) -> tuple[int, str]:
-            return Deployer._ssh_cmd(runner, remote, install_cmd, stdin,
+            return Deployer._ssh_cmd(runner, user, host, install_cmd, stdin,
                                      accept_new, port)
 
         rc, stderr = attempt()

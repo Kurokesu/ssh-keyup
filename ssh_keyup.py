@@ -391,6 +391,12 @@ class SSHConfig:
         return blocks
 
     @staticmethod
+    def _field(block: str, name: str) -> str:
+        """Value of a config keyword in a block, empty when absent."""
+        m = re.search(rf"^\s*{name}\s+(\S+)", block, re.MULTILINE)
+        return m.group(1) if m else ""
+
+    @staticmethod
     def _has_unmanaged_host(
         text: str, alias: str, managed_blocks: dict[str, tuple[int, int]],
     ) -> bool:
@@ -469,23 +475,15 @@ class SSHConfig:
     def collect_entries(text: str) -> list[dict[str, str]]:
         """Parse managed entries from SSH config text."""
         entries = []
-        for m in re.finditer(
-            r"^#ssh-keyup:begin (\S+)(?: (\S+))?[^\n]*\n"
-            r"(.*?)^#ssh-keyup:end \1",
-            text, re.MULTILINE | re.DOTALL,
-        ):
-            body = m.group(3)
-
-            def field(name: str, body: str = body) -> str:
-                fm = re.search(rf"^\s*{name}\s+(\S+)", body, re.MULTILINE)
-                return fm.group(1) if fm else "?"
-
+        for alias, (start, end) in SSHConfig._find_managed_blocks(text).items():
+            block = text[start:end]
+            begin = block.split("\n", 1)[0].split()
             entries.append({
-                "alias": m.group(1),
-                "date": m.group(2) or "?",
-                "host": field("HostName"),
-                "user": field("User"),
-                "key": field("IdentityFile"),
+                "alias": alias,
+                "date": begin[2] if len(begin) > 2 else "?",
+                "host": SSHConfig._field(block, "HostName") or "?",
+                "user": SSHConfig._field(block, "User") or "?",
+                "key": SSHConfig._field(block, "IdentityFile") or "?",
             })
         return entries
 
@@ -518,16 +516,15 @@ class SSHConfig:
             cli.fatal(f"No entry '{alias}' managed by ssh-keyup.")
 
         start, end = blocks[alias]
-        key_m = re.search(r"^\s*IdentityFile\s+(\S+)", text[start:end],
-                          re.MULTILINE)
+        key = SSHConfig._field(text[start:end], "IdentityFile")
 
         new_text = SSHConfig._splice_out(text, blocks[alias])
         SSHConfig._atomic_write(ssh_config, new_text)
         cli.msg(f"Removed '{alias}' from {ssh_config}")
 
-        if not key_m:
+        if not key:
             return
-        key_path = Path(key_m.group(1)).expanduser()
+        key_path = Path(key).expanduser()
         pub_path = Path(str(key_path) + ".pub")
         if key_path.exists() or pub_path.exists():
             key_path.unlink(missing_ok=True)

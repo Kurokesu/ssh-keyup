@@ -175,4 +175,4 @@ Works, with two password prompts and the default key shared across devices again
 
 ### Why does RouterOS refuse my password over SSH after adding a key?
 
-That is the default: once a user has a key, RouterOS stops accepting that user's password over SSH. WinBox and WebFig are unaffected, and password SSH can be turned back on under `/ip/ssh`.
+That is the default: once a user has a key, RouterOS stops accepting that user's password over SSH. WinBox and WebFig are unaffected. `/ip/ssh/set password-authentication=yes` turns password SSH back on (`always-allow-password-login=yes` on 7.20 and older).

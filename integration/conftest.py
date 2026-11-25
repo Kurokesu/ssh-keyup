@@ -174,8 +174,11 @@ def _scan_host_key(port: int) -> str:
         scan = subprocess.run(
             ["ssh-keyscan", "-p", str(port), HOST],
             check=False, capture_output=True, text=True, timeout=60)
-        if scan.stdout.strip():
-            return scan.stdout
+        # ssh-keyscan can print banner comment without a key
+        keys = [line for line in scan.stdout.splitlines()
+                if line and not line.startswith("#")]
+        if keys:
+            return "\n".join(keys) + "\n"
         time.sleep(2)
     return ""
 

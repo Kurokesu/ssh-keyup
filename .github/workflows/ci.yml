@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.13", "3.14"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     # Official images cover 3.8, which setup-python does not
     container: python:${{ matrix.python-version }}-slim
@@ -54,8 +54,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        # setup-python has no 3.8 for current runner images
+        # setup-python has no 3.8 for current runner images, no 3.9 for Ubuntu 26.04
         python-version: ["3.9", "3.13", "3.14"]
+        exclude:
+          - os: ubuntu-latest
+            python-version: "3.9"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6

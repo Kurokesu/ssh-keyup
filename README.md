@@ -20,17 +20,15 @@ Needs **Python 3.8+** and OpenSSH tools (`ssh`, `ssh-keygen`) in PATH:
 - **Windows 10/11**: Python from [python.org](https://www.python.org/downloads/) or Microsoft Store. OpenSSH Client via Settings > Optional Features or [Git for Windows](https://gitforwindows.org).
 - **Linux**: `sudo apt install python3 openssh-client` (usually pre-installed).
 
-Install globally with pip:
+Install with [pipx](https://pipx.pypa.io/stable/how-to/install-pipx.html):
 
 ```bash
-pip install ssh-keyup
+pipx install ssh-keyup
 
 ssh-keyup   # ready to use anywhere
 ```
 
-> **Tip:** If `ssh-keyup` is missing or runs an old version after install, new script sits in a folder outside PATH (pip warns about this). Add that folder to PATH, or install with [pipx](https://pipx.pypa.io/) instead:
->
-> `pipx install ssh-keyup`
+*`pip install ssh-keyup` works too. Add any folder it warns about to PATH.*
 
 Or run directly without installing:
 

@@ -649,7 +649,7 @@ class Deployer:
     # ssh -v chatter that is not an error and not remote output
     _SSH_NOISE = ("debug1:", "OpenSSH_", "Authenticated to ",
                   "Transferred: ", "Bytes per second: ",
-                  "Warning: Permanently added")
+                  "Warning: Permanently added", "** ")
 
     @staticmethod
     def _is_authenticated(stderr: str) -> bool:

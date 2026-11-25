@@ -826,6 +826,16 @@ ROUTEROS_REJECT = CLEAN_STDERR.replace(
     "failure: unable to load key file (wrong format or bad passphrase)! "
     "(/user/ssh-keys/add; line 1)\nTransferred:")
 
+# Clean run through OpenSSH 10.1+, RouterOS has no post-quantum key exchange
+PQ_WARNING_STDERR = CLEAN_STDERR.replace(
+    "Authenticated to",
+    "** WARNING: connection is not using a post-quantum key exchange "
+    "algorithm.\n"
+    '** This session may be vulnerable to "store now, decrypt later" '
+    "attacks.\n"
+    "** The server may need to be upgraded. See https://openssh.com/pq.html\n"
+    "Authenticated to")
+
 ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 pi@rpi"
 RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB pi@rpi"
 
@@ -886,6 +896,9 @@ class TestReportFailure:
     def test_error_lines_drop_blank_lines(self):
         assert ssh_keyup.Deployer._error_lines(CLEAN_STDERR) == []
 
+    def test_error_lines_drop_post_quantum_warning(self):
+        assert ssh_keyup.Deployer._error_lines(PQ_WARNING_STDERR) == []
+
     def test_routeros_rejected_key_hints_version(self, capsys):
         ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,
                                            ssh_keyup.TargetOS.ROUTEROS,
@@ -943,6 +956,10 @@ class TestSucceeded:
 
     def test_routeros_clean_output_succeeds(self):
         assert ssh_keyup.Deployer._succeeded(0, CLEAN_STDERR, self.ROUTEROS)
+
+    def test_routeros_post_quantum_warning_succeeds(self):
+        assert ssh_keyup.Deployer._succeeded(0, PQ_WARNING_STDERR,
+                                             self.ROUTEROS)
 
     def test_routeros_any_remote_output_fails(self):
         assert not ssh_keyup.Deployer._succeeded(0, ROUTEROS_REJECT,

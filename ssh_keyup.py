@@ -761,7 +761,8 @@ class Deployer:
     @staticmethod
     def deploy(runner: Runner, user: str, host: str, pub_path: Path,
                port: int = SSH_PORT,
-               target_os: TargetOS = TargetOS.LINUX) -> TargetOS | None:
+               target_os: TargetOS = TargetOS.LINUX,
+               ) -> tuple[TargetOS | None, bool]:
         """Deploy public key in a single SSH session.
 
         Return target OS key landed on, None unless device confirmed.
@@ -773,10 +774,14 @@ class Deployer:
 
         install_cmd, stdin = Deployer._install_command(target_os, user,
                                                        pub_key)
+        logged_in = False
 
         def attempt(accept_new: bool = False) -> tuple[int, str]:
-            return Deployer._ssh_cmd(runner, user, host, install_cmd, stdin,
-                                     accept_new, port)
+            nonlocal logged_in
+            rc, output = Deployer._ssh_cmd(runner, user, host, install_cmd,
+                                           stdin, accept_new, port)
+            logged_in = logged_in or Deployer._is_authenticated(output)
+            return rc, output
 
         rc, stderr = attempt()
 
@@ -787,7 +792,7 @@ class Deployer:
             cli.msg()
             if not cli.ask_yn("Remove old host key and retry?"):
                 cli.msg(f"\nAborted. To fix manually:\n  ssh-keygen -R {host}")
-                return None
+                return None, logged_in
             cli.status(f"Removing old host key for '{host}' ...")
             # Non-default ports are keyed as [host]:port in known_hosts
             known = host if port == SSH_PORT else f"[{host}]:{port}"
@@ -795,7 +800,7 @@ class Deployer:
             rc, stderr = attempt(accept_new=True)
         elif rc != 0 and Deployer._is_unknown_host(stderr):
             if not Deployer._handle_unknown_host(host, stderr):
-                return None
+                return None, logged_in
             rc, stderr = attempt(accept_new=True)
 
         # Banner read missed or skipped, ssh -v still names the remote
@@ -811,8 +816,8 @@ class Deployer:
 
         if not Deployer._confirmed(stderr):
             Deployer._report_failure(stderr, target_os, pub_key)
-            return None
-        return target_os
+            return None, logged_in
+        return target_os, logged_in
 
 
 def sanitize_alias(name: str, quiet: bool = False) -> str:
@@ -1187,15 +1192,16 @@ def main() -> None:
                     if key_generated:
                         discard_keys(key_path, pub_path)
                     cli.fatal(f"SSH config update failed: {ex}")
-            deployed = Deployer.deploy(runner, user, host, pub_path, port,
-                                       target_os)
+            deployed, logged_in = Deployer.deploy(runner, user, host,
+                                                  pub_path, port, target_os)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()
                 discard_keys(key_path, pub_path)
             raise
         if deployed is None:
-            if key_generated:
+            # Only a run that never logged in is sure to have left no key
+            if key_generated and not logged_in:
                 discard_keys(key_path, pub_path)
             sys.exit(1)
 

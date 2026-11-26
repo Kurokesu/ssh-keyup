@@ -391,6 +391,9 @@ class FakeRunner:
         self.inputs = []
         self.mode = mode
 
+    def check(self):
+        pass
+
     def _next(self, cmd, kwargs):
         self.cmds.append(cmd)
         self.inputs.append(kwargs.get("input"))
@@ -1011,7 +1014,7 @@ class TestDeploy:
     def test_remote_failure_reported_after_login(self, tmp_path, capsys):
         runner = FakeRunner(rc=1, out=AUTH_OK_STDERR)
         assert ssh_keyup.Deployer.deploy(
-            runner, "admin", "router", self._pub(tmp_path)) is None
+            runner, "admin", "router", self._pub(tmp_path)) == (None, True)
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "credentials" not in out
@@ -1022,7 +1025,7 @@ class TestDeploy:
         deployed = ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
             target_os=self.ROUTEROS)
-        assert deployed is self.ROUTEROS
+        assert deployed == (self.ROUTEROS, True)
         assert "/user/ssh-keys/add" in runner.cmds[0][-1]
         assert runner.inputs == [b""]
 
@@ -1033,26 +1036,26 @@ class TestDeploy:
         deployed = ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
             target_os=self.ROUTEROS)
-        assert deployed is self.ROUTEROS
+        assert deployed == (self.ROUTEROS, True)
 
     def test_marker_decides_over_exit_status(self, tmp_path):
         runner = FakeRunner(rc=1, out=confirmed(AUTH_OK_STDERR))
         assert ssh_keyup.Deployer.deploy(
-            runner, "pi", "rpi", self._pub(tmp_path)) is self.LINUX
+            runner, "pi", "rpi", self._pub(tmp_path)) == (self.LINUX, True)
         assert len(runner.cmds) == 1
 
     def test_clean_session_without_marker_fails(self, tmp_path, capsys):
         runner = FakeRunner(rc=0, out=RETRY_STDERR)
         assert ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
-            target_os=self.ROUTEROS) is None
+            target_os=self.ROUTEROS) == (None, True)
         assert "did not confirm" in capsys.readouterr().out
 
     def test_routeros_rejection_with_exit_zero_fails(self, tmp_path, capsys):
         runner = FakeRunner(rc=0, out=ROUTEROS_REJECT)
         assert ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
-            target_os=self.ROUTEROS) is None
+            target_os=self.ROUTEROS) == (None, True)
         out = capsys.readouterr().out
         assert "install command failed" in out
         assert "7.12" in out
@@ -1063,7 +1066,7 @@ class TestDeploy:
                                      (0, confirmed(CLEAN_STDERR))])
         deployed = ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path))
-        assert deployed is self.ROUTEROS
+        assert deployed == (self.ROUTEROS, True)
         assert "RouterOS detected" in capsys.readouterr().out
         assert len(runner.cmds) == 2
         assert "authorized_keys" in runner.cmds[0][-1]
@@ -1072,15 +1075,85 @@ class TestDeploy:
     def test_no_fallback_without_login(self, tmp_path):
         runner = FakeRunner(rc=1, out=AUTH_FAIL_STDERR)
         assert ssh_keyup.Deployer.deploy(
-            runner, "admin", "router", self._pub(tmp_path)) is None
+            runner, "admin", "router", self._pub(tmp_path)) == (None, False)
         assert len(runner.cmds) == 1
 
     def test_no_fallback_when_os_was_given(self, tmp_path):
         runner = FakeRunner(rc=1, out=ROUTEROS_STDERR)
         assert ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
-            target_os=self.ROUTEROS) is None
+            target_os=self.ROUTEROS) == (None, True)
         assert len(runner.cmds) == 1
+
+
+class Setup:
+    """Run main() on a throwaway home with deploy outcome canned."""
+
+    ROUTEROS = ssh_keyup.TargetOS.ROUTEROS
+
+    def __init__(self, home, monkeypatch):
+        self.ssh_dir = home / ".ssh"
+        self.key = self.ssh_dir / "id_ed25519_gw"
+        self.pub = self.ssh_dir / "id_ed25519_gw.pub"
+        self.config = self.ssh_dir / "config"
+        self.monkeypatch = monkeypatch
+        # Path.home() reads one or the other, depending on platform
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setattr(sys, "argv", ["ssh-keyup", "admin@router", "gw"])
+        monkeypatch.setattr(ssh_keyup, "Runner", FakeRunner)
+        monkeypatch.setattr(
+            ssh_keyup, "gather_input",
+            lambda args, runner: ("router", "admin", "gw", 22,
+                                  self.ROUTEROS))
+        monkeypatch.setattr(ssh_keyup, "generate_key", self.seed)
+
+    def seed(self, runner=None, key_path=None, key_type=None, text="new"):
+        self.ssh_dir.mkdir(exist_ok=True)
+        self.key.write_text(f"{text} private")
+        self.pub.write_text(f"ssh-ed25519 AAAA {text}\n")
+
+    def run(self, outcome):
+        """Run main(), return its exit code."""
+        self.monkeypatch.setattr(ssh_keyup.Deployer, "deploy",
+                                 lambda *args, **kwargs: outcome)
+        try:
+            ssh_keyup.main()
+        except SystemExit as ex:
+            return ex.code
+        return 0
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    return Setup(tmp_path, monkeypatch)
+
+
+class TestMainKeys:
+    def test_success_writes_config_and_keeps_pair(self, setup):
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.key.exists()
+        assert "IdentityFile ~/.ssh/id_ed25519_gw" in setup.config.read_text()
+
+    def test_discards_new_pair_when_nothing_logged_in(self, setup):
+        assert setup.run((None, False)) == 1
+        assert not setup.key.exists()
+        assert not setup.pub.exists()
+        assert not setup.config.exists()
+
+    def test_skips_cleanup_once_logged_in(self, setup, capsys):
+        assert setup.run((None, True)) == 1
+        assert setup.key.exists()
+        assert setup.pub.exists()
+        assert not setup.config.exists()
+        assert "Cleaning up" not in capsys.readouterr().out
+
+    def test_never_discards_a_pair_it_did_not_generate(self, setup,
+                                                       monkeypatch):
+        setup.seed(text="old")
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        assert setup.run((None, False)) == 1
+        assert setup.key.read_text() == "old private"
 
 
 class TestAtomicWrite:

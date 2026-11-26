@@ -761,10 +761,14 @@ class Deployer:
     @staticmethod
     def _ssh_cmd(runner: Runner, user: str, host: str, install_cmd: str,
                  stdin: bytes, accept_new: bool = False,
-                 port: int = SSH_PORT) -> tuple[int, str]:
+                 port: int = SSH_PORT,
+                 login_key: Path | None = None) -> tuple[int, str]:
         """Run SSH deploy command, verbose so failures can be explained."""
         policy = "accept-new" if accept_new else "yes"
         cmd = ["ssh", "-v"]
+        if login_key:
+            # Forward slashes suit Windows OpenSSH and Git Bash alike
+            cmd.extend(["-i", login_key.as_posix()])
         if port != SSH_PORT:
             cmd.extend(["-p", str(port)])
         # Connect to probed host even when its name is also a config alias
@@ -780,6 +784,7 @@ class Deployer:
     def deploy(runner: Runner, user: str, host: str, pub_path: Path,
                port: int = SSH_PORT,
                target_os: TargetOS = TargetOS.LINUX,
+               login_key: Path | None = None,
                ) -> tuple[TargetOS | None, bool]:
         """Deploy public key in a single SSH session.
 
@@ -797,7 +802,8 @@ class Deployer:
         def attempt(accept_new: bool = False) -> tuple[int, str]:
             nonlocal logged_in
             rc, output = Deployer._ssh_cmd(runner, user, host, install_cmd,
-                                           stdin, accept_new, port)
+                                           stdin, accept_new, port,
+                                           login_key)
             logged_in = logged_in or Deployer._is_authenticated(output)
             return rc, output
 
@@ -1210,8 +1216,11 @@ def main() -> None:
                     if key_generated:
                         discard_keys(key_path, pub_path)
                     cli.fatal(f"SSH config update failed: {ex}")
+            # Existing key may already be installed, then no password is asked
+            login_key = None if key_generated else key_path
             deployed, logged_in = Deployer.deploy(runner, user, host,
-                                                  pub_path, port, target_os)
+                                                  pub_path, port, target_os,
+                                                  login_key)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()

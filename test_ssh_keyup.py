@@ -882,6 +882,7 @@ RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB pi@rpi"
 AUTH_FAIL_STDERR = """\
 OpenSSH_9.5p2, LibreSSL 3.8.2
 debug1: Connecting to pi [10.0.0.5] port 22.
+no such identity: /home/me/.ssh/id_rsa: No such file or directory
 Permission denied, please try again.
 Permission denied, please try again.
 pi@10.0.0.5: Permission denied (publickey,password).

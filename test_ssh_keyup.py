@@ -293,8 +293,7 @@ class TestCheckExisting:
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
-        base, overwriting = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
-        assert overwriting is True
+        base = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
         assert "#ssh-keyup:begin mypi" not in base
         assert "#ssh-keyup:begin jet" in base
         assert cfg.read_text() == SAMPLE_CONFIG
@@ -302,8 +301,7 @@ class TestCheckExisting:
     def test_no_managed_entry(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.write_text("Host manual\n    HostName 10.0.0.1\n")
-        base, overwriting = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
-        assert overwriting is False
+        base = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
         assert base == cfg.read_text()
 
     def test_decline_overwrite_keeps_config(self, tmp_path, monkeypatch):
@@ -317,13 +315,13 @@ class TestCheckExisting:
 
     def test_missing_config(self, tmp_path):
         cfg = tmp_path / "config"
-        assert ssh_keyup.SSHConfig.check_existing(cfg, "mypi") == ("", False)
+        assert ssh_keyup.SSHConfig.check_existing(cfg, "mypi") == ""
 
     def test_writing_base_drops_entry(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config"
         cfg.write_text(SAMPLE_CONFIG)
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
-        base, _ = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
+        base = ssh_keyup.SSHConfig.check_existing(cfg, "mypi")
         ssh_keyup.SSHConfig.write(cfg, base)
         text = cfg.read_text()
         assert "#ssh-keyup:begin mypi" not in text
@@ -663,10 +661,11 @@ class TestPruneOtherType:
 
 
 class TestSSHCommand:
-    def test_omits_port_flag_on_default(self):
+    def test_pins_default_port(self):
         runner = FakeRunner()
         ssh_keyup.Deployer._ssh_cmd(runner, "pi", "h", "cmd", b"key")
-        assert "-p" not in runner.cmds[0]
+        cmd = runner.cmds[0]
+        assert cmd[cmd.index("-p") + 1] == "22"
 
     def test_passes_port_flag_when_custom(self):
         runner = FakeRunner()
@@ -1237,6 +1236,13 @@ class TestMainKeys:
     def test_new_key_is_not_offered_for_login(self, setup):
         assert setup.run((setup.ROUTEROS, True)) == 0
         assert setup.deploys[0][-1] is None
+
+    def test_failed_overwrite_keeps_config_entry(self, setup, monkeypatch):
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        before = setup.config.read_text()
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+        assert setup.run((None, False)) == 1
+        assert setup.config.read_text() == before
 
 
 class TestMainRegenerate:

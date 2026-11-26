@@ -82,3 +82,18 @@ def test_routeros_rejected_key_is_not_confirmed(session):
     assert run.returncode == 1, run.stdout + run.stderr
     assert "install command failed" in run.stdout
     assert "Host broken" not in session.config_text()
+
+
+def test_routeros_says_why_second_key_is_refused(session):
+    if session.target.name != "ros7":
+        pytest.skip("RouterOS-only behavior")
+
+    assert session.keyup(session.address, "alpha").returncode == 0
+    run = session.keyup(session.address, "beta")
+    assert run.returncode == 1
+    assert "refuses password login" in run.stdout
+    assert not session.key("beta").exists()
+    assert "beta" not in session.config_text()
+
+    login = session.via_alias("alpha", session.target.noop)
+    assert login.returncode == 0, login.stderr

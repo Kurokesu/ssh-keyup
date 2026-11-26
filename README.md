@@ -150,7 +150,7 @@ Run `ssh-keyup` again. It detects a changed key, shows new fingerprint for confi
 
 ### Does `--remove` clean up entries on the device?
 
-No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `authorized_keys` (or `/user/ssh-keys` entry on RouterOS) stays until removed there.
+No. It deletes local key pair and `~/.ssh/config` entry. Line in the device's `authorized_keys` (or `/user/ssh-keys` entry on RouterOS) stays until removed there. Same goes for old key after regenerating a key pair.
 
 ### What devices are supported?
 

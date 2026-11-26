@@ -96,6 +96,7 @@ update ssh config   ~/.ssh/config
 - **Never touches your password**. Only the public key is piped over SSH and OpenSSH prompts for the password itself
 - **Separate key per device** (`~/.ssh/id_ed25519_<alias>`), Ed25519 by default or RSA with `--key-type rsa`
 - Deploys in a **single SSH session**, one password prompt total
+- Replaces existing key only after **device confirms** new one, failed runs leave key and config as they were
 - Adds a named entry to `~/.ssh/config`, works instantly with `ssh <alias>` and VS Code Remote SSH
 - Checks host is **reachable** first, so typos surface before keys exist
 - Detects **RouterOS** and imports the key its way
@@ -157,7 +158,7 @@ Any Linux device reachable over SSH: Raspberry Pi, NVIDIA Jetson, Orange Pi, VMs
 
 ### Can I use an RSA key instead of Ed25519?
 
-Yes. `--key-type rsa` generates a 4096-bit RSA key for devices or policies that will not take Ed25519. Keys carry their type in the name, `id_ed25519_mypi` or `id_rsa_mypi`, so switching type for an alias leaves the old key alone and ssh-keyup offers to delete it once the new one is verified working.
+Yes. `--key-type rsa` generates a 4096-bit RSA key for devices or policies that will not take Ed25519. Keys carry their type in the name, `id_ed25519_mypi` or `id_rsa_mypi`, so switching type for an alias leaves the old key alone and ssh-keyup offers to delete it once device confirms new one.
 
 ### How do I add an SSH key to a MikroTik router from Windows?
 
@@ -174,3 +175,5 @@ Works, with two password prompts and the default key shared across devices again
 ### Why does RouterOS refuse my password over SSH after adding a key?
 
 That is the default: once a user has a key, RouterOS stops accepting that user's password over SSH. WinBox and WebFig are unaffected. `/ip/ssh/set password-authentication=yes` turns password SSH back on (`always-allow-password-login=yes` on 7.20 and older).
+
+Same default stops `ssh-keyup` from adding a second key for that user by password. Remove first key under System > Users > SSH Keys in WinBox or WebFig, then run again. Running again for an alias whose key is still in `~/.ssh` needs no password, `ssh-keyup` logs in with that key.

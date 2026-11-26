@@ -885,6 +885,35 @@ pi@10.0.0.5: Permission denied (publickey,password).
 """
 
 
+class TestFindGitBash:
+    @staticmethod
+    def install(tmp_path, monkeypatch, *names):
+        root = tmp_path / "Git"
+        for name in ("cmd/git.exe", *names):
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        monkeypatch.setattr(ssh_keyup, "which",
+                            lambda _: str(root / "cmd" / "git.exe"))
+        return root
+
+    def test_picks_console_bash_over_windowed_launcher(
+            self, tmp_path, monkeypatch):
+        root = self.install(tmp_path, monkeypatch,
+                            "git-bash.exe", "bin/bash.exe")
+        assert ssh_keyup.Runner._find_git_bash() == str(
+            root / "bin" / "bash.exe")
+
+    def test_windowed_launcher_alone_is_no_fallback(
+            self, tmp_path, monkeypatch):
+        self.install(tmp_path, monkeypatch, "git-bash.exe")
+        assert ssh_keyup.Runner._find_git_bash() is None
+
+    def test_none_without_git(self, monkeypatch):
+        monkeypatch.setattr(ssh_keyup, "which", lambda _: None)
+        assert ssh_keyup.Runner._find_git_bash() is None
+
+
 class TestRunCapture:
     def test_merges_stderr_then_stdout(self):
         runner = ssh_keyup.Runner()

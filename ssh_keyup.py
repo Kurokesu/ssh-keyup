@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from shutil import which
-from typing import TypeVar
+from typing import IO, TypeVar
 
 if sys.platform == "win32":
     import ctypes
@@ -355,6 +355,14 @@ class CLI:
 cli = CLI()
 
 
+class Interrupted(KeyboardInterrupt):
+    """Ctrl+C mid-command, with output captured so far."""
+
+    def __init__(self, output: str = "") -> None:
+        super().__init__()
+        self.output = output
+
+
 class Runner:
     """Run SSH commands natively or via Git Bash as fallback."""
 
@@ -417,10 +425,23 @@ class Runner:
         their console errors use, RouterOS writes them to stdout.
         """
         args, shell = self._subprocess_args(cmd)
-        r = subprocess.run(args, shell=shell, check=False,
-                           capture_output=True, **kwargs)
-        text = (r.stderr or b"") + (r.stdout or b"")
-        return r.returncode, text.decode(errors="replace")
+        # Files rather than pipes, output written before Ctrl+C survives it
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            try:
+                r = subprocess.run(args, shell=shell, check=False,
+                                   stdout=out, stderr=err, **kwargs)
+            except KeyboardInterrupt:
+                raise Interrupted(Runner._read_back(err, out)) from None
+            return r.returncode, Runner._read_back(err, out)
+
+    @staticmethod
+    def _read_back(*files: IO[bytes]) -> str:
+        """Join what a command wrote to its capture files."""
+        text = b""
+        for f in files:
+            f.seek(0)
+            text += f.read()
+        return text.decode(errors="replace")
 
     def run_stdout(
         self, cmd: list[str] | str, **kwargs,

@@ -494,8 +494,11 @@ class SSHConfig:
         return before or after
 
     @staticmethod
-    def check_existing(ssh_config: Path, alias: str) -> tuple[str, bool]:
-        """Check for an existing alias, prompt to overwrite."""
+    def check_existing(ssh_config: Path, alias: str) -> str:
+        """Check for an existing alias, prompt to overwrite.
+
+        Return config text without that alias, file itself stays as is.
+        """
         text = SSHConfig._read(ssh_config)
         blocks = SSHConfig._find_managed_blocks(text)
 
@@ -510,14 +513,14 @@ class SSHConfig:
             sys.exit(1)
 
         if not has_managed:
-            return text, False
+            return text
 
         msg = f"'{alias}' already configured by ssh-keyup. Overwrite?"
         if not cli.ask_yn(msg):
             cli.cancel("No changes were made")
             sys.exit(0)
 
-        return SSHConfig._splice_out(text, blocks[alias]), True
+        return SSHConfig._splice_out(text, blocks[alias])
 
     @staticmethod
     def collect_entries(text: str) -> list[dict[str, str]]:
@@ -770,11 +773,9 @@ class Deployer:
         if login_key:
             # Forward slashes suit Windows OpenSSH and Git Bash alike
             cmd.extend(["-i", login_key.as_posix()])
-        if port != SSH_PORT:
-            cmd.extend(["-p", str(port)])
         # Connect to probed host even when its name is also a config alias
         hostname = host.replace("%", "%%")  # HostName expands % tokens
-        cmd.extend(["-o", f"HostName={hostname}",
+        cmd.extend(["-p", str(port), "-o", f"HostName={hostname}",
                     "-o", f"StrictHostKeyChecking={policy}"])
         # ssh-agent keys would use up server's login tries before password
         cmd.extend(["-o", "IdentitiesOnly=yes",
@@ -1187,7 +1188,7 @@ def main() -> None:
 
         cli.separator()
 
-        config_base, overwriting = SSHConfig.check_existing(ssh_config, alias)
+        config_base = SSHConfig.check_existing(ssh_config, alias)
 
         ssh_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1213,17 +1214,7 @@ def main() -> None:
             generate_key(runner, new_path, args.key_type)
 
         cli.separator()
-        # Remove stale entry now, otherwise deploy's ssh would resolve
-        # the typed host through its old HostName. Stays removed on
-        # deploy failure, user chose to overwrite.
         try:
-            if overwriting:
-                try:
-                    SSHConfig.write(ssh_config, config_base)
-                except OSError as ex:
-                    if key_generated:
-                        discard_keys(new_path, new_pub)
-                    cli.fatal(f"SSH config update failed: {ex}")
             deployed, logged_in = Deployer.deploy(runner, user, host,
                                                   new_pub, port, target_os,
                                                   login_key)

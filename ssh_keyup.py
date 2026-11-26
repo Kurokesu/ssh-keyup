@@ -48,6 +48,7 @@ BANNER_TIMEOUT = 1.0
 
 KEY_TYPES = ("ed25519", "rsa")
 RSA_BITS = 4096
+NEW_KEY_SUFFIX = ".new"
 
 DEPLOY_MARKER = "ssh-keyup-ok"
 PASSWORD_RETRY = "Permission denied, please try again."
@@ -1195,14 +1196,21 @@ def main() -> None:
         pub_path = ssh_dir / f"{key_name}.pub"
 
         key_generated = True
+        login_key = None
+        new_path, new_pub = key_path, pub_path
         if pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
             key_generated = cli.ask_yn("Regenerate key pair?")
+            # Existing key may already be installed, then no password is asked
+            login_key = key_path
             if key_generated:
-                key_path.unlink(missing_ok=True)
-                pub_path.unlink()
+                # Existing pair stays until device confirms its replacement
+                new_path = ssh_dir / f"{key_name}{NEW_KEY_SUFFIX}"
+                new_pub = ssh_dir / f"{new_path.name}.pub"
+                new_path.unlink(missing_ok=True)
+                new_pub.unlink(missing_ok=True)
         if key_generated:
-            generate_key(runner, key_path, args.key_type)
+            generate_key(runner, new_path, args.key_type)
 
         cli.separator()
         # Remove stale entry now, otherwise deploy's ssh would resolve
@@ -1214,23 +1222,29 @@ def main() -> None:
                     SSHConfig.write(ssh_config, config_base)
                 except OSError as ex:
                     if key_generated:
-                        discard_keys(key_path, pub_path)
+                        discard_keys(new_path, new_pub)
                     cli.fatal(f"SSH config update failed: {ex}")
-            # Existing key may already be installed, then no password is asked
-            login_key = None if key_generated else key_path
             deployed, logged_in = Deployer.deploy(runner, user, host,
-                                                  pub_path, port, target_os,
+                                                  new_pub, port, target_os,
                                                   login_key)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()
-                discard_keys(key_path, pub_path)
+                discard_keys(new_path, new_pub)
             raise
         if deployed is None:
             # Only a run that never logged in is sure to have left no key
             if key_generated and not logged_in:
-                discard_keys(key_path, pub_path)
+                discard_keys(new_path, new_pub)
             sys.exit(1)
+
+        if new_path != key_path:
+            try:
+                new_path.replace(key_path)
+                new_pub.replace(pub_path)
+            except OSError as ex:
+                cli.fatal(f"Key deployed, but replacing {key_name} failed: "
+                          f"{ex}")
 
         try:
             SSHConfig.update(ssh_config, alias, host, user, key_name,

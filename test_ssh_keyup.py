@@ -1174,9 +1174,14 @@ class Setup:
         self.deploys = []
 
     def seed(self, runner=None, key_path=None, key_type=None, text="new"):
+        key = key_path or self.key
         self.ssh_dir.mkdir(exist_ok=True)
-        self.key.write_text(f"{text} private")
-        self.pub.write_text(f"ssh-ed25519 AAAA {text}\n")
+        key.write_text(f"{text} private")
+        key.with_name(f"{key.name}.pub").write_text(
+            f"ssh-ed25519 AAAA {text}\n")
+
+    def leftovers(self):
+        return sorted(p.name for p in self.ssh_dir.glob("*.new*"))
 
     def run(self, outcome):
         """Run main(), return its exit code."""
@@ -1232,6 +1237,39 @@ class TestMainKeys:
     def test_new_key_is_not_offered_for_login(self, setup):
         assert setup.run((setup.ROUTEROS, True)) == 0
         assert setup.deploys[0][-1] is None
+
+
+class TestMainRegenerate:
+    @pytest.fixture(autouse=True)
+    def existing(self, setup, monkeypatch):
+        setup.seed(text="old")
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: True)
+
+    def test_replaces_existing_pair_once_confirmed(self, setup):
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][3].name == "id_ed25519_gw.new.pub"
+        assert setup.deploys[0][-1] == setup.key
+        assert setup.key.read_text() == "new private"
+        assert setup.pub.read_text() == "ssh-ed25519 AAAA new\n"
+        assert setup.leftovers() == []
+
+    def test_failure_leaves_existing_pair_untouched(self, setup):
+        assert setup.run((None, False)) == 1
+        assert setup.key.read_text() == "old private"
+        assert setup.leftovers() == []
+
+    def test_unconfirmed_login_keeps_both_pairs(self, setup):
+        assert setup.run((None, True)) == 1
+        assert setup.key.read_text() == "old private"
+        assert setup.leftovers() == ["id_ed25519_gw.new",
+                                     "id_ed25519_gw.new.pub"]
+
+    def test_stale_new_pair_is_regenerated(self, setup):
+        setup.seed(key_path=setup.ssh_dir / "id_ed25519_gw.new",
+                   text="stale")
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.key.read_text() == "new private"
+        assert setup.leftovers() == []
 
 
 class TestAtomicWrite:

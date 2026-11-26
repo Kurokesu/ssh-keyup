@@ -49,6 +49,8 @@ BANNER_TIMEOUT = 1.0
 KEY_TYPES = ("ed25519", "rsa")
 RSA_BITS = 4096
 NEW_KEY_SUFFIX = ".new"
+DEFAULT_IDENTITIES = ("id_rsa", "id_ecdsa", "id_ecdsa_sk", "id_ed25519",
+                      "id_ed25519_sk")
 
 DEPLOY_MARKER = "ssh-keyup-ok"
 PASSWORD_RETRY = "Permission denied, please try again."
@@ -773,6 +775,9 @@ class Deployer:
         for login_key in login_keys:
             # Forward slashes suit Windows OpenSSH and Git Bash alike
             cmd.extend(["-i", login_key.as_posix()])
+        # -i replaces ssh's default keys, so name them too
+        for name in DEFAULT_IDENTITIES:
+            cmd.extend(["-o", f"IdentityFile=~/.ssh/{name}"])
         # Connect to probed host even when its name is also a config alias
         hostname = host.replace("%", "%%")  # HostName expands % tokens
         cmd.extend(["-p", str(port), "-o", f"HostName={hostname}",

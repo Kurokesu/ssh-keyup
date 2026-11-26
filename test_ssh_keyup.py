@@ -1128,6 +1128,12 @@ class TestDeploy:
             target_os=self.ROUTEROS) == (None, True)
         assert len(runner.cmds) == 1
 
+    def test_offers_no_ssh_agent_keys(self, tmp_path):
+        runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
+        ssh_keyup.Deployer.deploy(runner, "admin", "router",
+                                  self._pub(tmp_path))
+        assert "IdentitiesOnly=yes" in runner.cmds[0]
+
 
 class Setup:
     """Run main() on a throwaway home with deploy outcome canned."""

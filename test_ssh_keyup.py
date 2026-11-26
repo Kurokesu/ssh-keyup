@@ -924,6 +924,28 @@ class TestRunCapture:
         assert rc == 3
         assert text.splitlines() == ["from stderr", "from stdout"]
 
+    def test_feeds_input(self):
+        runner = ssh_keyup.Runner()
+        runner.mode = "native"
+        script = "import sys; print(sys.stdin.read().upper())"
+        _, text = runner.run_capture([sys.executable, "-c", script],
+                                     input=b"key")
+        assert text.strip() == "KEY"
+
+    def test_ctrl_c_hands_over_output_so_far(self, monkeypatch):
+        def interrupted(args, **kwargs):
+            kwargs["stdout"].write(b"remote said\n")
+            kwargs["stderr"].write(b"Authenticated to router\n")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(ssh_keyup.subprocess, "run", interrupted)
+        runner = ssh_keyup.Runner()
+        runner.mode = "native"
+        with pytest.raises(ssh_keyup.Interrupted) as info:
+            runner.run_capture(["ssh"])
+        assert info.value.output.splitlines() == [
+            "Authenticated to router", "remote said"]
+
 
 class TestReportFailure:
     def test_detects_login(self):

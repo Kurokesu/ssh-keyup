@@ -1317,6 +1317,31 @@ class TestMainRegenerate:
         assert setup.leftovers() == []
 
 
+class TestMainLonePrivateKey:
+    @pytest.fixture(autouse=True)
+    def lone(self, setup, monkeypatch):
+        setup.seed(text="old")
+        setup.pub.unlink()
+
+        def refuse(msg):
+            raise AssertionError("should not prompt")
+
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", refuse)
+
+    def test_replaced_once_confirmed(self, setup):
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][3].name == "id_ed25519_gw.new.pub"
+        assert setup.deploys[0][-1] == (setup.key,)
+        assert setup.key.read_text() == "new private"
+        assert setup.pub.read_text() == "ssh-ed25519 AAAA new\n"
+        assert setup.leftovers() == []
+
+    def test_survives_failed_deploy(self, setup):
+        assert setup.run((None, False)) == 1
+        assert setup.key.read_text() == "old private"
+        assert setup.leftovers() == []
+
+
 class TestAtomicWrite:
     @pytest.mark.parametrize("text,expected", [
         ("Host a\n\n\n", "Host a\n"),

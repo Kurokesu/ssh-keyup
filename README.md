@@ -104,6 +104,26 @@ update ssh config   ~/.ssh/config
 - **Entry management**, list or retire devices without leaving stale keys behind
 - **Zero dependencies**, standard library plus system OpenSSH
 
+## Security
+
+Whole tool is one file, [`ssh_keyup.py`](https://github.com/Kurokesu/ssh-keyup/blob/main/ssh_keyup.py). Keys, logins and host checks go through system OpenSSH:
+
+- Private key stays local, only public key reaches remote
+- OpenSSH asks for password itself, ssh-keyup does not read it
+- Unknown or changed host key shows its fingerprint and waits for confirmation
+- Locally changes only alias key pair, its `~/.ssh/config` entry and `known_hosts`
+- On remote adds one line to `~/.ssh/authorized_keys`, or one `/user/ssh-keys` entry on RouterOS
+- No telemetry, connects only to remote host
+- Keys carry no passphrase. Add one with `ssh-keygen -p -f ~/.ssh/id_ed25519_<alias>`
+
+Every PyPI release is built and uploaded by this repository's release workflow through Trusted Publishing, with signed attestation. Verify a download against this repository:
+
+```bash
+pipx run pypi-attestations verify pypi --repository https://github.com/Kurokesu/ssh-keyup pypi:ssh_keyup-<version>-py3-none-any.whl
+```
+
+Report vulnerabilities privately, see [security policy](https://github.com/Kurokesu/ssh-keyup/security/policy).
+
 ## FAQ
 
 ### How do I set up passwordless SSH from Windows by hand?

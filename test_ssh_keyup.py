@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for ssh_keyup argument handling and helpers."""
 
+import signal
 import socket
 import sys
 import threading
@@ -380,7 +381,7 @@ class FakeRunner:
     """Stand-in for Runner, returns canned output and records commands.
 
     Pass `results` as a list of (rc, out) to answer successive calls
-    differently, the last entry repeats.
+    differently, the last entry repeats. An exception entry is raised.
     """
 
     def __init__(self, rc=0, out="", results=None, mode="native"):
@@ -395,9 +396,11 @@ class FakeRunner:
     def _next(self, cmd, kwargs):
         self.cmds.append(cmd)
         self.inputs.append(kwargs.get("input"))
-        if len(self.results) > 1:
-            return self.results.pop(0)
-        return self.results[0]
+        result = (self.results.pop(0) if len(self.results) > 1
+                  else self.results[0])
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     def run(self, cmd, **kwargs):
         return self._next(cmd, kwargs)[0]
@@ -1210,6 +1213,27 @@ class TestDeploy:
                                   self._pub(tmp_path))
         assert "-i" not in runner.cmds[0]
 
+    @pytest.mark.parametrize("output, logged_in", [
+        (AUTH_FAIL_STDERR, False),
+        (AUTH_OK_STDERR, True),
+    ])
+    def test_ctrl_c_in_session_says_whether_it_logged_in(
+            self, tmp_path, output, logged_in):
+        runner = FakeRunner(results=[ssh_keyup.Interrupted(output)])
+        with pytest.raises(ssh_keyup.Interrupted) as info:
+            ssh_keyup.Deployer.deploy(runner, "pi", "rpi", self._pub(tmp_path))
+        assert info.value.logged_in == logged_in
+
+    def test_ctrl_c_in_retry_remembers_earlier_login(self, tmp_path):
+        runner = FakeRunner(results=[(1, ROUTEROS_STDERR),
+                                     ssh_keyup.Interrupted(AUTH_FAIL_STDERR)])
+        with pytest.raises(ssh_keyup.Interrupted) as info:
+            ssh_keyup.Deployer.deploy(runner, "pi", "rpi", self._pub(tmp_path))
+        assert info.value.logged_in
+
+
+CTRL_C_EXIT = ssh_keyup.SIGNAL_EXIT_BASE + signal.SIGINT
+
 
 class Setup:
     """Run main() on a throwaway home with deploy outcome canned."""
@@ -1248,6 +1272,8 @@ class Setup:
         """Run main(), return its exit code."""
         def deploy(*args):
             self.deploys.append(args)
+            if isinstance(outcome, BaseException):
+                raise outcome
             return outcome
 
         self.monkeypatch.setattr(ssh_keyup.Deployer, "deploy", deploy)
@@ -1334,6 +1360,24 @@ class TestMainKeys:
         assert setup.run((None, False)) == 1
         assert setup.config.read_text() == before
 
+    @pytest.mark.parametrize("interrupt", [
+        KeyboardInterrupt(), ssh_keyup.Interrupted(logged_in=False),
+    ])
+    def test_ctrl_c_before_login_discards_new_pair(self, setup, capsys,
+                                                    interrupt):
+        assert setup.run(interrupt) == CTRL_C_EXIT
+        assert not setup.key.exists()
+        assert not setup.pub.exists()
+        assert "Cancelled" in capsys.readouterr().out
+
+    def test_ctrl_c_after_login_skips_cleanup(self, setup, capsys):
+        assert setup.run(ssh_keyup.Interrupted(logged_in=True)) == CTRL_C_EXIT
+        assert setup.key.exists()
+        assert setup.pub.exists()
+        out = capsys.readouterr().out
+        assert "Cleaning up" not in out
+        assert "Cancelled" in out
+
 
 class TestMainRegenerate:
     @pytest.fixture(autouse=True)
@@ -1356,6 +1400,17 @@ class TestMainRegenerate:
 
     def test_unconfirmed_login_keeps_both_pairs(self, setup):
         assert setup.run((None, True)) == 1
+        assert setup.key.read_text() == "old private"
+        assert setup.leftovers() == ["id_ed25519_gw.new",
+                                     "id_ed25519_gw.new.pub"]
+
+    def test_ctrl_c_before_login_discards_staged_pair(self, setup):
+        assert setup.run(ssh_keyup.Interrupted(logged_in=False)) == CTRL_C_EXIT
+        assert setup.key.read_text() == "old private"
+        assert setup.leftovers() == []
+
+    def test_ctrl_c_after_login_keeps_both_pairs(self, setup):
+        assert setup.run(ssh_keyup.Interrupted(logged_in=True)) == CTRL_C_EXIT
         assert setup.key.read_text() == "old private"
         assert setup.leftovers() == ["id_ed25519_gw.new",
                                      "id_ed25519_gw.new.pub"]

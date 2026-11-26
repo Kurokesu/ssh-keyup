@@ -358,9 +358,10 @@ cli = CLI()
 class Interrupted(KeyboardInterrupt):
     """Ctrl+C mid-command, with output captured so far."""
 
-    def __init__(self, output: str = "") -> None:
+    def __init__(self, output: str = "", logged_in: bool = False) -> None:
         super().__init__()
         self.output = output
+        self.logged_in = logged_in
 
 
 class Runner:
@@ -827,9 +828,14 @@ class Deployer:
 
         def attempt(accept_new: bool = False) -> tuple[int, str]:
             nonlocal logged_in
-            rc, output = Deployer._ssh_cmd(runner, user, host, install_cmd,
-                                           stdin, accept_new, port,
-                                           login_keys)
+            try:
+                rc, output = Deployer._ssh_cmd(runner, user, host,
+                                               install_cmd, stdin, accept_new,
+                                               port, login_keys)
+            except Interrupted as ex:
+                ex.logged_in = (logged_in
+                                or Deployer._is_authenticated(ex.output))
+                raise
             logged_in = logged_in or Deployer._is_authenticated(output)
             return rc, output
 
@@ -1245,8 +1251,9 @@ def main() -> None:
             deployed, logged_in = Deployer.deploy(runner, user, host,
                                                   new_pub, port, target_os,
                                                   login_keys)
-        except KeyboardInterrupt:
-            if key_generated:
+        except KeyboardInterrupt as ex:
+            logged_in = isinstance(ex, Interrupted) and ex.logged_in
+            if key_generated and not logged_in:
                 cli.msg()
                 discard_keys(new_path, new_pub)
             raise

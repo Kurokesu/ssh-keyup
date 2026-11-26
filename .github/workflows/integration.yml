@@ -8,6 +8,9 @@ on:
     - cron: "0 5 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   target:
     name: target (${{ matrix.service }})

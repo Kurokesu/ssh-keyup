@@ -779,6 +779,18 @@ class TestInstallCommand:
         # The add must sit outside on-error, or its message gets swallowed
         assert cmd.index("on-error={}") < cmd.index("/user/ssh-keys/add")
 
+    def test_linux_marker_needs_every_step(self):
+        cmd, _ = ssh_keyup.Deployer._install_command(
+            ssh_keyup.TargetOS.LINUX, "pi", "ssh-ed25519 AAAA c")
+        assert cmd.endswith("&& chmod 600 ~/.ssh/authorized_keys "
+                            "&& echo ssh-keyup-ok")
+
+    def test_routeros_marker_comes_after_add(self):
+        cmd, _ = ssh_keyup.Deployer._install_command(
+            ssh_keyup.TargetOS.ROUTEROS, "admin", VECTOR_KEY)
+        assert cmd.endswith('; :put "ssh-keyup-ok"')
+        assert cmd.index("/user/ssh-keys/add") < cmd.index(":put")
+
 
 class TestKeyFingerprint:
     def test_matches_ssh_keygen_with_padding(self):
@@ -835,6 +847,19 @@ PQ_WARNING_STDERR = CLEAN_STDERR.replace(
     "attacks.\n"
     "** The server may need to be upgraded. See https://openssh.com/pq.html\n"
     "Authenticated to")
+
+# Clean run after two mistyped passwords
+RETRY_STDERR = CLEAN_STDERR.replace(
+    "Authenticated to",
+    "Permission denied, please try again.\n"
+    "Permission denied, please try again.\n"
+    "Authenticated to")
+
+
+def confirmed(output):
+    """Session output followed by device's install marker on stdout."""
+    return output + ssh_keyup.DEPLOY_MARKER + "\n"
+
 
 ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 pi@rpi"
 RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB pi@rpi"
@@ -941,29 +966,36 @@ class TestReportFailure:
                                            ssh_keyup.TargetOS.LINUX, ED25519)
         assert "7.12" not in capsys.readouterr().out
 
+    def test_quiet_session_says_device_did_not_confirm(self, capsys):
+        ssh_keyup.Deployer._report_failure(RETRY_STDERR,
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
+        out = capsys.readouterr().out
+        assert "device did not confirm key install" in out
+        assert "install command failed" not in out
+        assert "Permission denied" not in out
 
-class TestSucceeded:
-    LINUX = ssh_keyup.TargetOS.LINUX
-    ROUTEROS = ssh_keyup.TargetOS.ROUTEROS
 
-    def test_nonzero_exit_fails_everywhere(self):
-        assert not ssh_keyup.Deployer._succeeded(1, CLEAN_STDERR, self.LINUX)
-        assert not ssh_keyup.Deployer._succeeded(1, CLEAN_STDERR,
-                                                 self.ROUTEROS)
+class TestConfirmed:
+    @pytest.mark.parametrize("output", [
+        confirmed(CLEAN_STDERR),
+        confirmed(RETRY_STDERR),
+        confirmed(PQ_WARNING_STDERR),
+        CLEAN_STDERR + "ssh-keyup-ok\r\n",
+    ])
+    def test_marker_line_confirms(self, output):
+        assert ssh_keyup.Deployer._confirmed(output)
 
-    def test_linux_ignores_remote_output(self):
-        assert ssh_keyup.Deployer._succeeded(0, AUTH_OK_STDERR, self.LINUX)
+    @pytest.mark.parametrize("output", [
+        CLEAN_STDERR, ROUTEROS_REJECT, AUTH_OK_STDERR, AUTH_FAIL_STDERR,
+    ])
+    def test_no_marker_no_confirmation(self, output):
+        assert not ssh_keyup.Deployer._confirmed(output)
 
-    def test_routeros_clean_output_succeeds(self):
-        assert ssh_keyup.Deployer._succeeded(0, CLEAN_STDERR, self.ROUTEROS)
-
-    def test_routeros_post_quantum_warning_succeeds(self):
-        assert ssh_keyup.Deployer._succeeded(0, PQ_WARNING_STDERR,
-                                             self.ROUTEROS)
-
-    def test_routeros_any_remote_output_fails(self):
-        assert not ssh_keyup.Deployer._succeeded(0, ROUTEROS_REJECT,
-                                                 self.ROUTEROS)
+    def test_command_echo_is_not_the_marker(self):
+        echo = ("debug1: Sending command: mkdir -p ~/.ssh "
+                "&& echo ssh-keyup-ok\n")
+        assert not ssh_keyup.Deployer._confirmed(CLEAN_STDERR + echo)
 
 
 class TestDeploy:
@@ -986,13 +1018,35 @@ class TestDeploy:
         assert len(runner.cmds) == 1
 
     def test_returns_target_os_on_success(self, tmp_path):
-        runner = FakeRunner(rc=0, out=CLEAN_STDERR)
+        runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
         deployed = ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path),
             target_os=self.ROUTEROS)
         assert deployed is self.ROUTEROS
         assert "/user/ssh-keys/add" in runner.cmds[0][-1]
         assert runner.inputs == [b""]
+
+    @pytest.mark.parametrize("output", [RETRY_STDERR, PQ_WARNING_STDERR])
+    def test_ssh_chatter_does_not_fail_a_confirmed_install(self, tmp_path,
+                                                           output):
+        runner = FakeRunner(rc=0, out=confirmed(output))
+        deployed = ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path),
+            target_os=self.ROUTEROS)
+        assert deployed is self.ROUTEROS
+
+    def test_marker_decides_over_exit_status(self, tmp_path):
+        runner = FakeRunner(rc=1, out=confirmed(AUTH_OK_STDERR))
+        assert ssh_keyup.Deployer.deploy(
+            runner, "pi", "rpi", self._pub(tmp_path)) is self.LINUX
+        assert len(runner.cmds) == 1
+
+    def test_clean_session_without_marker_fails(self, tmp_path, capsys):
+        runner = FakeRunner(rc=0, out=RETRY_STDERR)
+        assert ssh_keyup.Deployer.deploy(
+            runner, "admin", "router", self._pub(tmp_path),
+            target_os=self.ROUTEROS) is None
+        assert "did not confirm" in capsys.readouterr().out
 
     def test_routeros_rejection_with_exit_zero_fails(self, tmp_path, capsys):
         runner = FakeRunner(rc=0, out=ROUTEROS_REJECT)
@@ -1005,7 +1059,8 @@ class TestDeploy:
 
     def test_falls_back_to_routeros_after_linux_command_fails(
             self, tmp_path, capsys):
-        runner = FakeRunner(results=[(1, ROUTEROS_STDERR), (0, CLEAN_STDERR)])
+        runner = FakeRunner(results=[(1, ROUTEROS_STDERR),
+                                     (0, confirmed(CLEAN_STDERR))])
         deployed = ssh_keyup.Deployer.deploy(
             runner, "admin", "router", self._pub(tmp_path))
         assert deployed is self.ROUTEROS

@@ -1134,6 +1134,21 @@ class TestDeploy:
                                   self._pub(tmp_path))
         assert "IdentitiesOnly=yes" in runner.cmds[0]
 
+    def test_offers_login_key_in_every_attempt(self, tmp_path):
+        runner = FakeRunner(results=[(1, ROUTEROS_STDERR),
+                                     (0, confirmed(CLEAN_STDERR))])
+        key = tmp_path / "id_ed25519_r"
+        ssh_keyup.Deployer.deploy(runner, "admin", "router",
+                                  self._pub(tmp_path), login_key=key)
+        for cmd in runner.cmds:
+            assert cmd[cmd.index("-i") + 1] == key.as_posix()
+
+    def test_offers_no_key_by_default(self, tmp_path):
+        runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
+        ssh_keyup.Deployer.deploy(runner, "admin", "router",
+                                  self._pub(tmp_path))
+        assert "-i" not in runner.cmds[0]
+
 
 class Setup:
     """Run main() on a throwaway home with deploy outcome canned."""
@@ -1156,6 +1171,7 @@ class Setup:
             lambda args, runner: ("router", "admin", "gw", 22,
                                   self.ROUTEROS))
         monkeypatch.setattr(ssh_keyup, "generate_key", self.seed)
+        self.deploys = []
 
     def seed(self, runner=None, key_path=None, key_type=None, text="new"):
         self.ssh_dir.mkdir(exist_ok=True)
@@ -1164,8 +1180,11 @@ class Setup:
 
     def run(self, outcome):
         """Run main(), return its exit code."""
-        self.monkeypatch.setattr(ssh_keyup.Deployer, "deploy",
-                                 lambda *args, **kwargs: outcome)
+        def deploy(*args):
+            self.deploys.append(args)
+            return outcome
+
+        self.monkeypatch.setattr(ssh_keyup.Deployer, "deploy", deploy)
         try:
             ssh_keyup.main()
         except SystemExit as ex:
@@ -1203,6 +1222,16 @@ class TestMainKeys:
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
         assert setup.run((None, False)) == 1
         assert setup.key.read_text() == "old private"
+
+    def test_existing_key_is_offered_for_login(self, setup, monkeypatch):
+        setup.seed(text="old")
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][-1] == setup.key
+
+    def test_new_key_is_not_offered_for_login(self, setup):
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][-1] is None
 
 
 class TestAtomicWrite:

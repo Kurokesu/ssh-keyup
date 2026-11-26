@@ -68,6 +68,16 @@ def test_full_ssh_agent_does_not_block_password(session, tmp_path,
         ssh_agent.wait()
 
 
+def test_rerun_with_installed_key_needs_no_password(session):
+    assert session.keyup(session.address, "alpha").returncode == 0
+    session.config.unlink()
+
+    run = session.with_password("not-the-password").keyup(
+        session.address, "alpha")
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "Host alpha" in session.config_text()
+
+
 def test_rsa_key_grants_login(session):
     run = session.keyup(session.address, "delta", "--key-type", "rsa")
     assert run.returncode == 0, run.stdout + run.stderr

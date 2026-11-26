@@ -1208,7 +1208,8 @@ def main() -> None:
 
         key_generated = True
         new_path, new_pub = key_path, pub_path
-        if pub_path.exists():
+        # Public key alone cannot log in, so regenerate without prompting
+        if key_path.exists() and pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
             key_generated = cli.ask_yn("Regenerate key pair?")
             if key_generated:

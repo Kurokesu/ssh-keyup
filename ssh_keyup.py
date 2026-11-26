@@ -766,11 +766,11 @@ class Deployer:
     def _ssh_cmd(runner: Runner, user: str, host: str, install_cmd: str,
                  stdin: bytes, accept_new: bool = False,
                  port: int = SSH_PORT,
-                 login_key: Path | None = None) -> tuple[int, str]:
+                 login_keys: tuple[Path, ...] = ()) -> tuple[int, str]:
         """Run SSH deploy command, verbose so failures can be explained."""
         policy = "accept-new" if accept_new else "yes"
         cmd = ["ssh", "-v"]
-        if login_key:
+        for login_key in login_keys:
             # Forward slashes suit Windows OpenSSH and Git Bash alike
             cmd.extend(["-i", login_key.as_posix()])
         # Connect to probed host even when its name is also a config alias
@@ -786,7 +786,7 @@ class Deployer:
     def deploy(runner: Runner, user: str, host: str, pub_path: Path,
                port: int = SSH_PORT,
                target_os: TargetOS = TargetOS.LINUX,
-               login_key: Path | None = None,
+               login_keys: tuple[Path, ...] = (),
                ) -> tuple[TargetOS | None, bool]:
         """Deploy public key in a single SSH session.
 
@@ -805,7 +805,7 @@ class Deployer:
             nonlocal logged_in
             rc, output = Deployer._ssh_cmd(runner, user, host, install_cmd,
                                            stdin, accept_new, port,
-                                           login_key)
+                                           login_keys)
             logged_in = logged_in or Deployer._is_authenticated(output)
             return rc, output
 
@@ -1196,14 +1196,16 @@ def main() -> None:
         key_path = ssh_dir / key_name
         pub_path = ssh_dir / f"{key_name}.pub"
 
+        # Alias keys on disk may already be installed, sparing the password
+        types = sorted(KEY_TYPES, key=lambda t: t != args.key_type)
+        alias_keys = [ssh_dir / f"id_{t}_{file_alias}" for t in types]
+        login_keys = tuple(path for path in alias_keys if path.exists())
+
         key_generated = True
-        login_key = None
         new_path, new_pub = key_path, pub_path
         if pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
             key_generated = cli.ask_yn("Regenerate key pair?")
-            # Existing key may already be installed, then no password is asked
-            login_key = key_path
             if key_generated:
                 # Existing pair stays until device confirms its replacement
                 new_path = ssh_dir / f"{key_name}{NEW_KEY_SUFFIX}"
@@ -1217,7 +1219,7 @@ def main() -> None:
         try:
             deployed, logged_in = Deployer.deploy(runner, user, host,
                                                   new_pub, port, target_os,
-                                                  login_key)
+                                                  login_keys)
         except KeyboardInterrupt:
             if key_generated:
                 cli.msg()

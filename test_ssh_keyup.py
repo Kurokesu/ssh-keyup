@@ -1262,6 +1262,20 @@ class TestMainKeys:
         assert setup.run((setup.ROUTEROS, True)) == 0
         assert setup.deploys[0][-1] == (setup.key, rsa)
 
+    def test_lone_public_key_is_regenerated_without_prompt(self, setup,
+                                                           monkeypatch):
+        setup.seed(text="old")
+        setup.key.unlink()
+
+        def refuse(msg):
+            raise AssertionError("should not prompt")
+
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", refuse)
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.key.read_text() == "new private"
+        assert setup.deploys[0][-1] == ()
+        assert "IdentityFile ~/.ssh/id_ed25519_gw" in setup.config.read_text()
+
     def test_failed_overwrite_keeps_config_entry(self, setup, monkeypatch):
         assert setup.run((setup.ROUTEROS, True)) == 0
         before = setup.config.read_text()

@@ -10,7 +10,7 @@ services:
 
   # One network and the entrypoint bridges eth0, breaking host port mapping
   ros7:
-    image: evilfreelancer/docker-routeros:7.21.5
+    image: evilfreelancer/docker-routeros:7.24.7
     cap_add:
       - NET_ADMIN
     devices:

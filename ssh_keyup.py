@@ -1212,12 +1212,12 @@ def main() -> None:
         if key_path.exists() and pub_path.exists():
             cli.msg(f"Key pair exists {pub_path}")
             key_generated = cli.ask_yn("Regenerate key pair?")
-            if key_generated:
-                # Existing pair stays until device confirms its replacement
-                new_path = ssh_dir / f"{key_name}{NEW_KEY_SUFFIX}"
-                new_pub = ssh_dir / f"{new_path.name}.pub"
-                new_path.unlink(missing_ok=True)
-                new_pub.unlink(missing_ok=True)
+        if key_generated and key_path.exists():
+            # Existing key stays until device confirms its replacement
+            new_path = ssh_dir / f"{key_name}{NEW_KEY_SUFFIX}"
+            new_pub = ssh_dir / f"{new_path.name}.pub"
+            new_path.unlink(missing_ok=True)
+            new_pub.unlink(missing_ok=True)
         if key_generated:
             generate_key(runner, new_path, args.key_type)
 

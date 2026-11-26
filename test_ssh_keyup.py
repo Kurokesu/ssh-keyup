@@ -1143,6 +1143,16 @@ class TestDeploy:
             offered = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-i"]
             assert offered == [key.as_posix() for key in keys]
 
+    def test_offers_default_keys_after_login_keys(self, tmp_path):
+        runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
+        key = tmp_path / "id_ed25519_r"
+        ssh_keyup.Deployer.deploy(runner, "admin", "router",
+                                  self._pub(tmp_path), login_keys=(key,))
+        cmd = runner.cmds[0]
+        default = cmd.index("IdentityFile=~/.ssh/id_ed25519")
+        assert cmd.index(key.as_posix()) < default
+        assert "IdentityFile=~/.ssh/id_rsa" in cmd
+
     def test_offers_no_key_by_default(self, tmp_path):
         runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
         ssh_keyup.Deployer.deploy(runner, "admin", "router",

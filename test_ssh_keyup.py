@@ -1133,14 +1133,15 @@ class TestDeploy:
                                   self._pub(tmp_path))
         assert "IdentitiesOnly=yes" in runner.cmds[0]
 
-    def test_offers_login_key_in_every_attempt(self, tmp_path):
+    def test_offers_login_keys_in_every_attempt(self, tmp_path):
         runner = FakeRunner(results=[(1, ROUTEROS_STDERR),
                                      (0, confirmed(CLEAN_STDERR))])
-        key = tmp_path / "id_ed25519_r"
+        keys = (tmp_path / "id_ed25519_r", tmp_path / "id_rsa_r")
         ssh_keyup.Deployer.deploy(runner, "admin", "router",
-                                  self._pub(tmp_path), login_key=key)
+                                  self._pub(tmp_path), login_keys=keys)
         for cmd in runner.cmds:
-            assert cmd[cmd.index("-i") + 1] == key.as_posix()
+            offered = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-i"]
+            assert offered == [key.as_posix() for key in keys]
 
     def test_offers_no_key_by_default(self, tmp_path):
         runner = FakeRunner(rc=0, out=confirmed(CLEAN_STDERR))
@@ -1231,11 +1232,25 @@ class TestMainKeys:
         setup.seed(text="old")
         monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
         assert setup.run((setup.ROUTEROS, True)) == 0
-        assert setup.deploys[0][-1] == setup.key
+        assert setup.deploys[0][-1] == (setup.key,)
 
     def test_new_key_is_not_offered_for_login(self, setup):
         assert setup.run((setup.ROUTEROS, True)) == 0
-        assert setup.deploys[0][-1] is None
+        assert setup.deploys[0][-1] == ()
+
+    def test_other_type_key_is_offered_for_login(self, setup):
+        rsa = setup.ssh_dir / "id_rsa_gw"
+        setup.seed(key_path=rsa, text="rsa")
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][-1] == (rsa,)
+
+    def test_current_type_is_offered_first(self, setup, monkeypatch):
+        rsa = setup.ssh_dir / "id_rsa_gw"
+        setup.seed(key_path=rsa, text="rsa")
+        setup.seed(text="old")
+        monkeypatch.setattr(ssh_keyup.cli, "ask_yn", lambda msg: False)
+        assert setup.run((setup.ROUTEROS, True)) == 0
+        assert setup.deploys[0][-1] == (setup.key, rsa)
 
     def test_failed_overwrite_keeps_config_entry(self, setup, monkeypatch):
         assert setup.run((setup.ROUTEROS, True)) == 0
@@ -1254,7 +1269,7 @@ class TestMainRegenerate:
     def test_replaces_existing_pair_once_confirmed(self, setup):
         assert setup.run((setup.ROUTEROS, True)) == 0
         assert setup.deploys[0][3].name == "id_ed25519_gw.new.pub"
-        assert setup.deploys[0][-1] == setup.key
+        assert setup.deploys[0][-1] == (setup.key,)
         assert setup.key.read_text() == "new private"
         assert setup.pub.read_text() == "ssh-ed25519 AAAA new\n"
         assert setup.leftovers() == []

@@ -365,11 +365,9 @@ class Runner:
         if not git:
             return None
         root = Path(git).resolve().parent.parent
-        for name in ("git-bash.exe", "bin/bash.exe"):
-            p = root / name
-            if p.exists():
-                return str(p)
-        return None
+        # git-bash.exe opens its own window, pipes and exit code never arrive
+        p = root / "bin" / "bash.exe"
+        return str(p) if p.exists() else None
 
     def __init__(self) -> None:
         self.git_bash = Runner._find_git_bash()

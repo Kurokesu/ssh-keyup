@@ -809,8 +809,8 @@ class TestKeyFingerprint:
 # Verbose stderr after a successful login and a failing remote command
 AUTH_OK_STDERR = """\
 OpenSSH_9.5p2, LibreSSL 3.8.2
-debug1: Connecting to router [192.168.188.1] port 22.
-Authenticated to router ([192.168.188.1]:22) using "password".
+debug1: Connecting to router [192.168.88.1] port 22.
+Authenticated to router ([192.168.88.1]:22) using "password".
 debug1: Sending command: mkdir -p ~/.ssh && chmod 700 ~/.ssh
 bad command name mkdir (line 1 column 1)
 Transferred: sent 2204, received 2776 bytes, in 0.1 seconds

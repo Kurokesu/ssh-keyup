@@ -67,3 +67,18 @@ def test_routeros_refuses_password_once_keyed(session):
     assert session.remote(":nothing").returncode == 0
     assert session.keyup(session.address, "alpha").returncode == 0
     assert session.remote(":nothing").returncode != 0
+
+
+def test_routeros_rejected_key_is_not_confirmed(session):
+    if session.target.name != "ros7":
+        pytest.skip("RouterOS-only behavior")
+
+    # Without a terminal the regenerate prompt keeps this pair
+    key = session.key("broken")
+    key.write_text("not a key\n")
+    key.with_suffix(".pub").write_text("ssh-ed25519 AAAAnotakey broken\n")
+
+    run = session.keyup(session.address, "broken")
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "install command failed" in run.stdout
+    assert "Host broken" not in session.config_text()

@@ -49,6 +49,9 @@ BANNER_TIMEOUT = 1.0
 KEY_TYPES = ("ed25519", "rsa")
 RSA_BITS = 4096
 
+DEPLOY_MARKER = "ssh-keyup-ok"
+PASSWORD_RETRY = "Permission denied, please try again."
+
 SIGNAL_EXIT_BASE = 128
 STD_OUTPUT_HANDLE = -11
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
@@ -674,11 +677,17 @@ class Deployer:
                         pub_key: str) -> None:
         """Explain failed deploy, a remote error is not a login error."""
         cli.msg()
-        if Deployer._is_authenticated(stderr):
-            cli.fail("Logged in, but install command failed on device")
-        else:
+        lines = Deployer._error_lines(stderr)
+        if not Deployer._is_authenticated(stderr):
             cli.fail("SSH connection failed. Check host and credentials")
-        for line in Deployer._error_lines(stderr):
+        else:
+            # Password mistyped before the accepted one, not a remote error
+            lines = [line for line in lines if line != PASSWORD_RETRY]
+            if lines:
+                cli.fail("Logged in, but install command failed on device")
+            else:
+                cli.fail("Logged in, but device did not confirm key install")
+        for line in lines:
             cli.hint(f"  {line}")
         if target_os is not TargetOS.ROUTEROS:
             return
@@ -691,17 +700,13 @@ class Deployer:
                      "the full group has it")
 
     @staticmethod
-    def _succeeded(rc: int, output: str, target_os: TargetOS) -> bool:
-        """Judge install by exit status, plus remote output on RouterOS.
+    def _confirmed(output: str) -> bool:
+        """Return True if device printed the install marker.
 
-        RouterOS reports errors as text with exit status 0 and a working
-        install prints nothing, so any remote output means failure there.
+        Whole line only, ssh -v echoes the remote command with a prefix.
         """
-        if rc != 0:
-            return False
-        if target_os is TargetOS.ROUTEROS:
-            return not Deployer._error_lines(output)
-        return True
+        return any(line.strip() == DEPLOY_MARKER
+                   for line in output.splitlines())
 
     @staticmethod
     def _install_command(target_os: TargetOS, user: str,
@@ -716,19 +721,22 @@ class Deployer:
                 "key=$(cat) && "
                 "if ! grep -qF \"$key\" ~/.ssh/authorized_keys 2>/dev/null; "
                 "then printf '%s\\n' \"$key\" >> ~/.ssh/authorized_keys; fi "
-                "&& chmod 600 ~/.ssh/authorized_keys"
+                "&& chmod 600 ~/.ssh/authorized_keys "
+                f"&& echo {DEPLOY_MARKER}"
             )
             return cmd, pub_key.encode()
         elif target_os is TargetOS.ROUTEROS:
             # Pre-7.20 firmware lacks fingerprint, n stays 0 and add runs.
-            # Add sits outside on-error so its message is not swallowed.
+            # Add sits outside on-error, a failed add prints why and stops
+            # script before marker.
             fp = key_fingerprint(pub_key)
             cmd = (
                 ":local n 0; "
                 ":do { :set n [:len [/user/ssh-keys/find where "
                 f'user="{user}" and fingerprint="{fp}"]] }} on-error={{}}; '
                 ":if ($n = 0) do={ "
-                f'/user/ssh-keys/add user="{user}" key="{pub_key}" }}'
+                f'/user/ssh-keys/add user="{user}" key="{pub_key}" }}; '
+                f':put "{DEPLOY_MARKER}"'
             )
             return cmd, b""
         else:
@@ -756,8 +764,7 @@ class Deployer:
                target_os: TargetOS = TargetOS.LINUX) -> TargetOS | None:
         """Deploy public key in a single SSH session.
 
-        Return target OS the key landed on, None on failure. Differs
-        from the one passed in when fallback detection kicked in.
+        Return target OS key landed on, None unless device confirmed.
         """
         remote = f"{user}@{host}"
         pub_key = pub_path.read_text(encoding="utf-8").strip()
@@ -802,7 +809,7 @@ class Deployer:
                     target_os, user, pub_key)
                 rc, stderr = attempt(accept_new=True)
 
-        if not Deployer._succeeded(rc, stderr, target_os):
+        if not Deployer._confirmed(stderr):
             Deployer._report_failure(stderr, target_os, pub_key)
             return None
         return target_os

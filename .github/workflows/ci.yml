@@ -19,11 +19,15 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install tools
-        run: pip install ruff mypy
+        run: pip install ruff mypy zizmor
       - name: Lint
         run: ruff check .
       - name: Type check
         run: mypy ssh_keyup.py
+      - name: Audit workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --format=github .
 
   test:
     strategy:

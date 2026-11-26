@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
+import subprocess
+import time
+
 import pytest
 
 pytestmark = pytest.mark.integration
+
+MAX_AUTH_TRIES = 6  # sshd default
 
 
 def test_deploy_grants_key_login(session):
@@ -36,6 +41,31 @@ def test_second_alias_adds_second_key(session):
     for alias in ("alpha", "beta"):
         login = session.via_alias(alias, session.target.noop)
         assert login.returncode == 0, login.stderr
+
+
+def test_full_ssh_agent_does_not_block_password(session, tmp_path,
+                                                monkeypatch):
+    sock = tmp_path / "ssh-agent.sock"
+    ssh_agent = subprocess.Popen(["ssh-agent", "-D", "-a", str(sock)],
+                                 stdout=subprocess.DEVNULL)
+    try:
+        while not sock.exists():
+            time.sleep(0.1)
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+        for i in range(MAX_AUTH_TRIES):
+            key = tmp_path / f"ssh_agent_{i}"
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+                            "-f", str(key)], check=True)
+            subprocess.run(["ssh-add", "-q", str(key)], check=True,
+                           capture_output=True)
+
+        run = session.keyup(session.address, "alpha")
+        assert run.returncode == 0, run.stdout + run.stderr
+        login = session.via_alias("alpha", session.target.noop)
+        assert login.returncode == 0, login.stderr
+    finally:
+        ssh_agent.terminate()
+        ssh_agent.wait()
 
 
 def test_rsa_key_grants_login(session):

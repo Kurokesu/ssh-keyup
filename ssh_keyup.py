@@ -770,7 +770,9 @@ class Deployer:
         # Connect to probed host even when its name is also a config alias
         hostname = host.replace("%", "%%")  # HostName expands % tokens
         cmd.extend(["-o", f"HostName={hostname}",
-                    "-o", f"StrictHostKeyChecking={policy}",
+                    "-o", f"StrictHostKeyChecking={policy}"])
+        # ssh-agent keys would use up server's login tries before password
+        cmd.extend(["-o", "IdentitiesOnly=yes",
                     f"{user}@{host}", install_cmd])
         return runner.run_capture(cmd, input=stdin)
 

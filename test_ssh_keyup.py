@@ -864,6 +864,15 @@ def confirmed(output):
     return output + ssh_keyup.DEPLOY_MARKER + "\n"
 
 
+# RouterOS offering no password login, its user already has a key
+KEYED_USER_STDERR = """\
+OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2
+debug1: Remote protocol version 2.0, remote software version ROSSSH
+debug1: Authentications that can continue: publickey
+debug1: No more authentication methods to try.
+admin@192.168.88.1: Permission denied (publickey).
+"""
+
 ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 pi@rpi"
 RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB pi@rpi"
 
@@ -963,6 +972,40 @@ class TestReportFailure:
         out = capsys.readouterr().out
         assert "7.12" not in out
         assert "policy" not in out
+
+    def test_routeros_keyed_user_is_named(self, capsys):
+        ssh_keyup.Deployer._report_failure(KEYED_USER_STDERR,
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
+        out = capsys.readouterr().out
+        assert "'admin' already has SSH key" in out
+        assert "refuses password login" in out
+        assert "SSH Keys" in out
+        assert "password-authentication" not in out
+        assert "credentials" not in out
+
+    def test_keyed_user_found_when_banner_missed(self, capsys):
+        ssh_keyup.Deployer._report_failure(KEYED_USER_STDERR,
+                                           ssh_keyup.TargetOS.LINUX, ED25519)
+        assert "refuses password login" in capsys.readouterr().out
+
+    def test_routeros_wrong_password_is_not_a_keyed_user(self, capsys):
+        stderr = KEYED_USER_STDERR.replace("(publickey)",
+                                           "(publickey,password)")
+        ssh_keyup.Deployer._report_failure(stderr,
+                                           ssh_keyup.TargetOS.ROUTEROS,
+                                           ED25519)
+        out = capsys.readouterr().out
+        assert "Check host and credentials" in out
+        assert "refuses password login" not in out
+
+    def test_linux_without_password_login_stays_generic(self, capsys):
+        stderr = KEYED_USER_STDERR.replace("ROSSSH", "OpenSSH_9.6")
+        ssh_keyup.Deployer._report_failure(stderr,
+                                           ssh_keyup.TargetOS.LINUX, ED25519)
+        out = capsys.readouterr().out
+        assert "Check host and credentials" in out
+        assert "Permission denied (publickey)" in out
 
     def test_linux_gets_no_routeros_hints(self, capsys):
         ssh_keyup.Deployer._report_failure(ROUTEROS_REJECT,

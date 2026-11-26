@@ -51,6 +51,9 @@ RSA_BITS = 4096
 
 DEPLOY_MARKER = "ssh-keyup-ok"
 PASSWORD_RETRY = "Permission denied, please try again."
+# Final ssh refusal, naming user and login methods the server offered
+DENIED_LOGIN = re.compile(r"^(\S+)@\S+: Permission denied \(([\w,-]+)\)",
+                          re.MULTILINE)
 
 SIGNAL_EXIT_BASE = 128
 STD_OUTPUT_HANDLE = -11
@@ -673,12 +676,25 @@ class Deployer:
         return lines
 
     @staticmethod
+    def _report_keyed_user(user: str) -> None:
+        """Explain RouterOS offering no password login."""
+        cli.fail(f"'{user}' already has SSH key, "
+                 "RouterOS refuses password login")
+        cli.hint("  Remove that key under System > Users > SSH Keys "
+                 "(WinBox, WebFig)")
+
+    @staticmethod
     def _report_failure(stderr: str, target_os: TargetOS,
                         pub_key: str) -> None:
         """Explain failed deploy, a remote error is not a login error."""
         cli.msg()
         lines = Deployer._error_lines(stderr)
         if not Deployer._is_authenticated(stderr):
+            denied = DENIED_LOGIN.search(stderr)
+            if (denied and "password" not in denied.group(2).split(",")
+                    and os_from_ssh_verbose(stderr) is TargetOS.ROUTEROS):
+                Deployer._report_keyed_user(denied.group(1))
+                return
             cli.fail("SSH connection failed. Check host and credentials")
         else:
             # Password mistyped before the accepted one, not a remote error
